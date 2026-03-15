@@ -23,7 +23,8 @@ You receive:
 2. **sample**: ~200 representative loans with fields: amt, prog, purp, ms, lo, lock, rate, st, dt, lien, ln, channel, closingDate, lockExp, modified
 
 ## IMPORTANT
-- The stats cover ALL loans (30,000-70,000+), not just the sample.
+- The stats may cover ALL loans or a FILTERED subset. Check for "ACTIVE FILTERS" in the user message to know if filters are applied.
+- When filters are active, all stats and sample data reflect only the filtered subset. Your answers should reference the filtered context (e.g. "Among the 5,432 FHA loans in California...").
 - Use the pre-aggregated stats for any aggregate questions (totals, breakdowns, comparisons).
 - Only use the sample for questions about individual loan patterns or distributions that aren't covered by stats.
 
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
     }
 
-    const { question } = await req.json();
+    const { question, filters } = await req.json();
     if (!question || typeof question !== "string") {
       return NextResponse.json({ error: "Missing question" }, { status: 400 });
     }
@@ -73,9 +74,25 @@ export async function POST(req: NextRequest) {
     if (!ready) {
       return NextResponse.json({ error: "Pipeline cache is still warming up. Please try again in a minute." }, { status: 503 });
     }
-    const { stats, sample, totalLoans } = getAIContext(question);
+    const { stats, sample, totalLoans } = getAIContext(question, filters);
 
-    const userContent = `Pipeline statistics (${totalLoans.toLocaleString()} total loans):
+    // Build filter context string for Claude
+    const activeFilters: string[] = [];
+    if (filters) {
+      if (filters.state) activeFilters.push(`State: ${filters.state}`);
+      if (filters.lo) activeFilters.push(`Loan Officer: ${filters.lo}`);
+      if (filters.milestone) activeFilters.push(`Milestone: ${filters.milestone}`);
+      if (filters.program) activeFilters.push(`Program: ${filters.program}`);
+      if (filters.purpose) activeFilters.push(`Purpose: ${filters.purpose}`);
+      if (filters.lock) activeFilters.push(`Lock Status: ${filters.lock}`);
+      if (filters.dateFrom) activeFilters.push(`Date From: ${filters.dateFrom}`);
+      if (filters.dateTo) activeFilters.push(`Date To: ${filters.dateTo}`);
+    }
+    const filterContext = activeFilters.length > 0
+      ? `\n\nACTIVE FILTERS (data below is already filtered to this subset):\n${activeFilters.join(", ")}`
+      : "";
+
+    const userContent = `Pipeline statistics (${totalLoans.toLocaleString()} loans${activeFilters.length > 0 ? " after filtering" : " total"}):${filterContext}
 
 AGGREGATED STATS:
 ${JSON.stringify(stats, null, 0)}

@@ -476,6 +476,8 @@ export function getCompactRows(filters?: {
   program?: string;
   purpose?: string;
   lock?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }): { rows: CompactRow[]; total: number; cacheAge: number; filterOptions: FilterOptions } {
   let result = compactRows;
 
@@ -486,6 +488,15 @@ export function getCompactRows(filters?: {
     if (filters.program) result = result.filter((r) => r.prog === filters.program);
     if (filters.purpose) result = result.filter((r) => r.purp === filters.purpose);
     if (filters.lock) result = result.filter((r) => r.lock === filters.lock);
+    if (filters.dateFrom || filters.dateTo) {
+      const fromMs = filters.dateFrom ? new Date(filters.dateFrom).getTime() : 0;
+      const toMs = filters.dateTo ? new Date(filters.dateTo + "T23:59:59").getTime() : Infinity;
+      result = result.filter((r) => {
+        if (!r.dt) return false;
+        const dtMs = new Date(r.dt).getTime();
+        return dtMs >= fromMs && dtMs <= toMs;
+      });
+    }
   }
 
   return {
@@ -496,9 +507,29 @@ export function getCompactRows(filters?: {
   };
 }
 
-/** Pre-aggregated context for Claude AI. */
-export function getAIContext(question: string): { stats: AIContextStats; sample: CompactRow[]; totalLoans: number } {
-  const rows = compactRows;
+/** Pre-aggregated context for Claude AI. Accepts optional filters to scope data. */
+export function getAIContext(question: string, filters?: { state?: string; lo?: string; milestone?: string; program?: string; purpose?: string; lock?: string; dateFrom?: string; dateTo?: string }): { stats: AIContextStats; sample: CompactRow[]; totalLoans: number } {
+  let rows = compactRows;
+
+  // Apply filters if provided
+  if (filters) {
+    if (filters.state) rows = rows.filter((r) => r.st === filters.state);
+    if (filters.lo) rows = rows.filter((r) => r.lo === filters.lo);
+    if (filters.milestone) rows = rows.filter((r) => r.ms === filters.milestone);
+    if (filters.program) rows = rows.filter((r) => r.prog === filters.program);
+    if (filters.purpose) rows = rows.filter((r) => r.purp === filters.purpose);
+    if (filters.lock) rows = rows.filter((r) => r.lock === filters.lock);
+    if (filters.dateFrom || filters.dateTo) {
+      const fromMs = filters.dateFrom ? new Date(filters.dateFrom).getTime() : 0;
+      const toMs = filters.dateTo ? new Date(filters.dateTo + "T23:59:59").getTime() : Infinity;
+      rows = rows.filter((r) => {
+        if (!r.dt) return false;
+        const dtMs = new Date(r.dt).getTime();
+        return dtMs >= fromMs && dtMs <= toMs;
+      });
+    }
+  }
+
   const totalLoans = rows.length;
   const totalVolume = rows.reduce((s, r) => s + r.amt, 0);
 

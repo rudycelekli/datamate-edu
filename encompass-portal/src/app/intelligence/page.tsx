@@ -131,6 +131,8 @@ export default function IntelligencePage() {
   const [filterProgram, setFilterProgram] = useState("");
   const [filterPurpose, setFilterPurpose] = useState("");
   const [filterLock, setFilterLock] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
 
   // AI insight
   const [insightQuery, setInsightQuery] = useState("");
@@ -237,11 +239,12 @@ export default function IntelligencePage() {
     };
   }, [rows]);
 
-  const activeFilterCount = [filterState, filterLO, filterMilestone, filterProgram, filterPurpose, filterLock].filter(Boolean).length;
+  const activeFilterCount = [filterState, filterLO, filterMilestone, filterProgram, filterPurpose, filterLock, filterDateFrom, filterDateTo].filter(Boolean).length;
 
   const clearFilters = () => {
     setFilterState(""); setFilterLO(""); setFilterMilestone("");
     setFilterProgram(""); setFilterPurpose(""); setFilterLock("");
+    setFilterDateFrom(""); setFilterDateTo("");
   };
 
   // ─── Filtered rows ───
@@ -255,9 +258,16 @@ export default function IntelligencePage() {
       if (filterProgram && (f["Loan.LoanProgram"] || "") !== filterProgram) return false;
       if (filterPurpose && (f["Loan.LoanPurpose"] || "") !== filterPurpose) return false;
       if (filterLock && (f["Loan.LockStatus"] || "") !== filterLock) return false;
+      if (filterDateFrom || filterDateTo) {
+        const dtStr = f["Loan.DateCreated"] || pf(f, "", "745") || "";
+        if (!dtStr) return false;
+        const dtMs = new Date(dtStr).getTime();
+        if (filterDateFrom && dtMs < new Date(filterDateFrom).getTime()) return false;
+        if (filterDateTo && dtMs > new Date(filterDateTo + "T23:59:59").getTime()) return false;
+      }
       return true;
     });
-  }, [rows, filterState, filterLO, filterMilestone, filterProgram, filterPurpose, filterLock, activeFilterCount]);
+  }, [rows, filterState, filterLO, filterMilestone, filterProgram, filterPurpose, filterLock, filterDateFrom, filterDateTo, activeFilterCount]);
 
   // ─── Aggregations ───
   const stats = useMemo(() => {
@@ -487,11 +497,22 @@ export default function IntelligencePage() {
     setShowInsight(true);
     setInsightLoading(true);
     setInsightResult("");
+    // Build filter context for the insight
+    const activeFilters: string[] = [];
+    if (filterState) activeFilters.push(`State: ${filterState}`);
+    if (filterLO) activeFilters.push(`LO: ${filterLO}`);
+    if (filterMilestone) activeFilters.push(`Milestone: ${filterMilestone}`);
+    if (filterProgram) activeFilters.push(`Program: ${filterProgram}`);
+    if (filterPurpose) activeFilters.push(`Purpose: ${filterPurpose}`);
+    if (filterLock) activeFilters.push(`Lock: ${filterLock}`);
+    if (filterDateFrom) activeFilters.push(`From: ${filterDateFrom}`);
+    if (filterDateTo) activeFilters.push(`To: ${filterDateTo}`);
+    const filterNote = activeFilters.length > 0 ? ` (filtered: ${activeFilters.join(", ")})` : "";
     try {
       const res = await fetch("/api/intelligence/insight", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chartName, data, totalUnits: stats.totalUnits, totalVolume: stats.totalVolume }),
+        body: JSON.stringify({ chartName: chartName + filterNote, data, totalUnits: stats.totalUnits, totalVolume: stats.totalVolume }),
       });
       const d = await res.json();
       setInsightResult(d.insight || d.error || "No insights generated");
@@ -510,10 +531,21 @@ export default function IntelligencePage() {
     setAiChatLoading(true);
     setAiShowDataIdx(null);
     try {
+      // Send active filters so AI answers in the context of the filtered view
+      const filters: Record<string, string> = {};
+      if (filterState) filters.state = filterState;
+      if (filterLO) filters.lo = filterLO;
+      if (filterMilestone) filters.milestone = filterMilestone;
+      if (filterProgram) filters.program = filterProgram;
+      if (filterPurpose) filters.purpose = filterPurpose;
+      if (filterLock) filters.lock = filterLock;
+      if (filterDateFrom) filters.dateFrom = filterDateFrom;
+      if (filterDateTo) filters.dateTo = filterDateTo;
+
       const res = await fetch("/api/intelligence/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, filters: Object.keys(filters).length > 0 ? filters : undefined }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Failed");
@@ -907,7 +939,7 @@ export default function IntelligencePage() {
               </button>
             )}
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
             <select value={filterState} onChange={(e) => setFilterState(e.target.value)} className="text-xs border border-[var(--border)] rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-[var(--accent)]">
               <option value="">All States</option>
               {filterOptions.states.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -932,6 +964,14 @@ export default function IntelligencePage() {
               <option value="">All Lock Status</option>
               {filterOptions.locks.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
+            <div className="flex items-center gap-1">
+              <label className="text-[10px] text-[var(--text-muted)] whitespace-nowrap"><Clock className="w-3 h-3 inline mr-0.5" />From</label>
+              <input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} className="text-xs border border-[var(--border)] rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-[var(--accent)] w-full" />
+            </div>
+            <div className="flex items-center gap-1">
+              <label className="text-[10px] text-[var(--text-muted)] whitespace-nowrap">To</label>
+              <input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} className="text-xs border border-[var(--border)] rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-[var(--accent)] w-full" />
+            </div>
           </div>
           {activeFilterCount > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-2">
@@ -941,6 +981,8 @@ export default function IntelligencePage() {
               {filterProgram && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs">{filterProgram}<button onClick={() => setFilterProgram("")}><X className="w-3 h-3" /></button></span>}
               {filterPurpose && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-200 rounded text-xs">{filterPurpose}<button onClick={() => setFilterPurpose("")}><X className="w-3 h-3" /></button></span>}
               {filterLock && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-cyan-50 border border-cyan-200 rounded text-xs">{filterLock}<button onClick={() => setFilterLock("")}><X className="w-3 h-3" /></button></span>}
+              {filterDateFrom && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded text-xs"><Clock className="w-3 h-3" />From {filterDateFrom}<button onClick={() => setFilterDateFrom("")}><X className="w-3 h-3" /></button></span>}
+              {filterDateTo && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded text-xs"><Clock className="w-3 h-3" />To {filterDateTo}<button onClick={() => setFilterDateTo("")}><X className="w-3 h-3" /></button></span>}
               <span className="text-xs text-[var(--text-muted)] self-center ml-1">Showing {filteredRows.length} of {rows.length.toLocaleString()} loans{cacheAge > 0 ? ` (updated ${Math.floor(cacheAge / 60000)} min ago)` : ""}</span>
             </div>
           )}
