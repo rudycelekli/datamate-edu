@@ -643,22 +643,21 @@ export default function IntelligencePage() {
     );
   };
 
-  // Poll warmup progress while loading
+  // Poll for warmup completion: re-fetch when server has more data than we do
   useEffect(() => {
-    if (!loading) return;
     const interval = setInterval(async () => {
       try {
         const res = await fetch("/api/pipeline/stats");
         const status = await res.json();
         setWarmingProgress(status.loadedSoFar || 0);
-        if (status.state === "ready") {
-          clearInterval(interval);
+        // Re-fetch if server has significantly more data than we have
+        if (status.state === "ready" && status.totalRows > rows.length + 100) {
           fetchAll(true);
         }
       } catch { /* ignore */ }
     }, 5000);
     return () => clearInterval(interval);
-  }, [loading, fetchAll]);
+  }, [rows.length, fetchAll]);
 
   if (loading) {
     return (
