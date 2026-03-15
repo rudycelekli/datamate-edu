@@ -92,13 +92,25 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
 type Section = "snapshot" | "geography" | "characteristics" | "distribution" | "timeline" | "officers" | "performance" | "crosstab";
 
 export default function IntelligencePage() {
-  const [rows, setRows] = useState<PipelineRow[]>(() => getIntelCache().rows || []);
-  const [loading, setLoading] = useState(() => !getIntelCache().rows);
+  // Start with empty state to avoid hydration mismatch (server has no sessionStorage).
+  // useEffect below restores cached data on the client immediately after mount.
+  const [rows, setRows] = useState<PipelineRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expandedSection, setExpandedSection] = useState<Section | null>("snapshot");
-  // Connection status now handled by AppHeader
-  const [cacheAge, setCacheAge] = useState(() => getIntelCache().meta?.cacheAge || 0);
-  const [totalInCache, setTotalInCache] = useState(() => getIntelCache().meta?.total || 0);
+  const [cacheAge, setCacheAge] = useState(0);
+  const [totalInCache, setTotalInCache] = useState(0);
+
+  // Restore from cache on mount (client-only)
+  useEffect(() => {
+    const cached = getIntelCache();
+    if (cached.rows && cached.rows.length > 0) {
+      setRows(cached.rows);
+      setCacheAge(cached.meta?.cacheAge || 0);
+      setTotalInCache(cached.meta?.total || 0);
+      setLoading(false);
+    }
+  }, []);
   const [warmingProgress, setWarmingProgress] = useState(0);
 
   // Filters
