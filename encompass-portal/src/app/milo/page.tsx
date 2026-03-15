@@ -78,6 +78,44 @@ function resolveSourceFile(citation: string): string | null {
   return null;
 }
 
+/** Extract page number and searchable section text from a citation string */
+function parseCitationLocation(citation: string): { page?: number; search?: string } {
+  // Try to find page number: "p.15", "p. 15", "p15", "page 15", "pp. 15", "pg 15"
+  const pageMatch =
+    citation.match(/\bp\.?\s*(\d+)/i) ||
+    citation.match(/\bpage\s+(\d+)/i) ||
+    citation.match(/\bpg\.?\s*(\d+)/i) ||
+    citation.match(/\bpp\.?\s*(\d+)/i);
+  const page = pageMatch ? parseInt(pageMatch[1]) : undefined;
+
+  // Extract the most specific section identifier for search
+  // "Section II.A.4.d.ii(A)" → "II.A.4.d.ii(A)"
+  // "Section B3-3.1-02" → "B3-3.1-02"
+  // "Section 5501.1" → "5501.1"
+  const sectionMatch = citation.match(/Section\s+([\w.\-()\/]+(?:\s*[\w.\-()\/]+)*)/i);
+  // Also try "Chapter X" if no section found
+  const chapterMatch = !sectionMatch ? citation.match(/Chapter\s+(\d+)/i) : null;
+
+  const search = sectionMatch
+    ? sectionMatch[1].replace(/[,\s]+$/, "").trim()
+    : chapterMatch
+      ? `Chapter ${chapterMatch[1]}`
+      : undefined;
+
+  return { page, search };
+}
+
+/** Build PDF URL with page jump and search highlighting */
+function buildPdfUrl(file: string, citation: string): string {
+  const base = `/api/milo/docs?file=${encodeURIComponent(file)}`;
+  const loc = parseCitationLocation(citation);
+  const parts: string[] = ["toolbar=1"];
+  if (loc.page) parts.push(`page=${loc.page}`);
+  if (loc.search) parts.push(`search=${encodeURIComponent(loc.search)}`);
+  if (!loc.page) parts.push("view=FitH");
+  return `${base}#${parts.join("&")}`;
+}
+
 // ── Suggested starter questions ──
 const STARTERS = [
   { label: "FHA credit requirements", q: "What are the FHA credit score and down payment requirements? When is manual underwriting required?" },
@@ -587,20 +625,35 @@ export default function MiloPage() {
             </button>
           </div>
 
-          {/* PDF viewer */}
+          {/* PDF viewer - jumps to page & highlights section */}
           <div className="flex-1 relative">
-            <object
-              data={`/api/milo/docs?file=${encodeURIComponent(pdfPanel.file)}#toolbar=1&view=FitH`}
-              type="application/pdf"
-              className="w-full h-full"
-              title={`PDF: ${pdfPanel.file}`}
-            >
-              <iframe
-                src={`/api/milo/docs?file=${encodeURIComponent(pdfPanel.file)}#toolbar=1&view=FitH`}
-                className="w-full h-full border-0"
-                title={`PDF: ${pdfPanel.file}`}
-              />
-            </object>
+            {(() => {
+              const pdfUrl = buildPdfUrl(pdfPanel.file, pdfPanel.citation);
+              const loc = parseCitationLocation(pdfPanel.citation);
+              return (
+                <>
+                  {(loc.page || loc.search) && (
+                    <div className="px-4 py-1.5 bg-amber-50 border-b border-amber-200 text-[10px] text-amber-700 flex items-center gap-2">
+                      {loc.page && <span>Jumping to page {loc.page}</span>}
+                      {loc.page && loc.search && <span>&middot;</span>}
+                      {loc.search && <span>Searching for &quot;{loc.search}&quot;</span>}
+                    </div>
+                  )}
+                  <object
+                    data={pdfUrl}
+                    type="application/pdf"
+                    className="w-full h-full"
+                    title={`PDF: ${pdfPanel.file}`}
+                  >
+                    <iframe
+                      src={pdfUrl}
+                      className="w-full h-full border-0"
+                      title={`PDF: ${pdfPanel.file}`}
+                    />
+                  </object>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
