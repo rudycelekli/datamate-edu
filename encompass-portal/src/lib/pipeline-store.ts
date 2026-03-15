@@ -1,7 +1,7 @@
 /**
- * Shared module-level pipeline store.
- * Module variables persist across client-side navigation in Next.js App Router,
- * so all pages share the same cached data instead of each maintaining their own.
+ * Shared pipeline store with sessionStorage persistence.
+ * Module variables give instant reads; sessionStorage survives hot reloads
+ * and hard refreshes within the browser session.
  */
 
 interface PipelineRow {
@@ -47,7 +47,24 @@ interface CompactRow {
   modified: string;
 }
 
-// ── Shared state ──
+// ── sessionStorage helpers (safe for SSR) ──
+
+function ssGet<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as T;
+  } catch { return null; }
+}
+
+function ssSet(key: string, value: unknown) {
+  if (typeof window === "undefined") return;
+  try { sessionStorage.setItem(key, JSON.stringify(value)); } catch { /* quota */ }
+}
+
+// ── Shared state (module-level for speed, sessionStorage for persistence) ──
+
 let _pipelineCache: PipelineCache | null = null;
 let _pipelineParams = "";
 let _pipelineFetchTime = 0;
@@ -61,11 +78,20 @@ let _marketFetchTime = 0;
 
 let _connectedStatus: boolean | null = null;
 
-const STALE_MS = 300_000; // 5 minutes - user can always hit Refresh to force
+const STALE_MS = 300_000; // 5 minutes
 
 // ── Pipeline page cache ──
 
 export function getPipelineCache() {
+  // Restore from sessionStorage if module var was lost (hot reload)
+  if (!_pipelineCache) {
+    const stored = ssGet<{ data: PipelineCache; params: string; fetchTime: number }>("pl_cache");
+    if (stored && stored.data && (Date.now() - stored.fetchTime) < STALE_MS) {
+      _pipelineCache = stored.data;
+      _pipelineParams = stored.params;
+      _pipelineFetchTime = stored.fetchTime;
+    }
+  }
   return { data: _pipelineCache, params: _pipelineParams, fetchTime: _pipelineFetchTime };
 }
 
@@ -73,15 +99,25 @@ export function setPipelineCache(data: PipelineCache, params: string) {
   _pipelineCache = data;
   _pipelineParams = params;
   _pipelineFetchTime = Date.now();
+  ssSet("pl_cache", { data, params, fetchTime: _pipelineFetchTime });
 }
 
 export function isPipelineFresh(params: string): boolean {
-  return _pipelineCache !== null && _pipelineParams === params && (Date.now() - _pipelineFetchTime) < STALE_MS;
+  const cache = getPipelineCache(); // triggers restore if needed
+  return cache.data !== null && _pipelineParams === params && (Date.now() - _pipelineFetchTime) < STALE_MS;
 }
 
 // ── Intelligence page cache ──
 
 export function getIntelCache() {
+  if (!_intelRows) {
+    const stored = ssGet<{ rows: PipelineRow[]; meta: typeof _intelMeta; fetchTime: number }>("intel_cache");
+    if (stored && stored.rows && (Date.now() - stored.fetchTime) < STALE_MS) {
+      _intelRows = stored.rows;
+      _intelMeta = stored.meta;
+      _intelFetchTime = stored.fetchTime;
+    }
+  }
   return { rows: _intelRows, meta: _intelMeta, fetchTime: _intelFetchTime };
 }
 
@@ -89,24 +125,35 @@ export function setIntelCache(rows: PipelineRow[], meta: { cacheAge: number; tot
   _intelRows = rows;
   _intelMeta = meta;
   _intelFetchTime = Date.now();
+  ssSet("intel_cache", { rows, meta, fetchTime: _intelFetchTime });
 }
 
 export function isIntelFresh(): boolean {
+  getIntelCache(); // triggers restore
   return _intelRows !== null && (Date.now() - _intelFetchTime) < STALE_MS;
 }
 
 // ── Market page cache ──
 
 export function getMarketCache() {
+  if (!_marketCache) {
+    const stored = ssGet<{ data: typeof _marketCache; fetchTime: number }>("mkt_cache");
+    if (stored && stored.data && (Date.now() - stored.fetchTime) < STALE_MS) {
+      _marketCache = stored.data;
+      _marketFetchTime = stored.fetchTime;
+    }
+  }
   return { data: _marketCache, fetchTime: _marketFetchTime };
 }
 
 export function setMarketCache(data: typeof _marketCache) {
   _marketCache = data;
   _marketFetchTime = Date.now();
+  ssSet("mkt_cache", { data, fetchTime: _marketFetchTime });
 }
 
 export function isMarketFresh(): boolean {
+  getMarketCache(); // triggers restore
   return _marketCache !== null && (Date.now() - _marketFetchTime) < STALE_MS;
 }
 
@@ -118,6 +165,16 @@ let _warmingCacheAge = 0;
 let _warmingTotal = 0;
 
 export function getWarmingStatus() {
+  // Restore from sessionStorage if blank
+  if (!_warmingTotal && !_pipelineCache) {
+    const stored = ssGet<{ warming: boolean; loadedSoFar: number; cacheAge: number; total: number }>("warming_status");
+    if (stored) {
+      _warmingStatus = stored.warming;
+      _warmingLoadedSoFar = stored.loadedSoFar;
+      _warmingCacheAge = stored.cacheAge;
+      _warmingTotal = stored.total;
+    }
+  }
   // Prefer pipeline cache if it has data
   if (_pipelineCache) {
     return {
@@ -135,22 +192,30 @@ export function setWarmingStatus(warming: boolean, loadedSoFar: number, cacheAge
   _warmingLoadedSoFar = loadedSoFar;
   if (cacheAge !== undefined) _warmingCacheAge = cacheAge;
   if (total !== undefined) _warmingTotal = total;
+  ssSet("warming_status", { warming: _warmingStatus, loadedSoFar: _warmingLoadedSoFar, cacheAge: _warmingCacheAge, total: _warmingTotal });
 }
 
 // ── Connection status (shared across all pages) ──
 
 export function getConnectedStatus(): boolean | null {
+  if (_connectedStatus === null) {
+    const stored = ssGet<boolean>("conn_status");
+    if (stored !== null) _connectedStatus = stored;
+  }
   return _connectedStatus;
 }
 
 export function setConnectedStatus(status: boolean) {
   _connectedStatus = status;
+  ssSet("conn_status", status);
 }
 
 // ── Pipeline summary for Milo / Market insights ──
 
 export function getPipelineSummary(): string | null {
   // Use intel cache (full data) if available, else pipeline cache (partial)
+  getIntelCache(); // triggers restore
+  getPipelineCache(); // triggers restore
   const rows = _intelRows || _pipelineCache?.rows;
   if (!rows || rows.length === 0) return null;
 
@@ -198,6 +263,8 @@ export function getPipelineSummary(): string | null {
 
 /** State breakdown for Market page insights */
 export function getPipelineStateBreakdown(): Array<{ state: string; count: number; volume: number; pct: number }> | null {
+  getIntelCache(); // triggers restore
+  getPipelineCache(); // triggers restore
   const rows = _intelRows || _pipelineCache?.rows;
   if (!rows || rows.length === 0) return null;
 
