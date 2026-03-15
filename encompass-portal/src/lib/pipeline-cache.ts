@@ -191,6 +191,22 @@ async function fetchAllLoans(): Promise<PipelineRow[]> {
   const seenGuids = new Set<string>();
   const allRows: PipelineRow[] = [];
   warmupLoadedSoFar = 0;
+  let lastProgressiveUpdate = 0;
+
+  // Progressively make data available during warmup so pages aren't blocked.
+  // Updates every 2000 new rows so queries/Intelligence work with partial data.
+  function progressiveUpdate() {
+    if (allRows.length - lastProgressiveUpdate < 2000 && lastProgressiveUpdate > 0) return;
+    lastProgressiveUpdate = allRows.length;
+    fullRows = [...allRows];
+    compactRows = allRows.map(toCompact);
+    filterOptions = buildFilterOptions(allRows);
+    lastRefreshTime = new Date();
+    if (cacheState !== "ready") {
+      cacheState = "ready";
+      console.log(`[pipeline-cache] Progressive: ${allRows.length} loans now available`);
+    }
+  }
 
   const months = generateMonthWindows();
   console.log(`[pipeline-cache] Starting month-by-month fetch (${months.length} months, batch size: ${BATCH_SIZE})...`);
@@ -232,6 +248,9 @@ async function fetchAllLoans(): Promise<PipelineRow[]> {
         if (newInBatch === 0 && rows.length === BATCH_SIZE) {
           hasMore = false;
         }
+
+        // Make partial data available progressively
+        if (newInBatch > 0) progressiveUpdate();
       } catch (err) {
         console.error(`[pipeline-cache] Error in ${label} offset ${offset}: ${err}`);
         hasMore = false;
@@ -264,6 +283,8 @@ async function fetchAllLoans(): Promise<PipelineRow[]> {
       warmupLoadedSoFar = allRows.length;
       offset += BATCH_SIZE;
       hasMore = rows.length === BATCH_SIZE && newInBatch > 0;
+
+      if (newInBatch > 0) progressiveUpdate();
     } catch {
       hasMore = false;
     }
