@@ -201,6 +201,13 @@ export default function PipelinePage() {
       if (!res.ok) throw new Error(await res.text());
       const data: PipelineResponse = await res.json();
 
+      // Never replace good data with partial warming data
+      if (data._warming && hasData && total > (data.total || 0)) {
+        setIsWarming(true);
+        setLoadedSoFar(data._loadedSoFar || 0);
+        return; // Keep existing data, just update warming status
+      }
+
       setRows(data.rows || []);
       setTotal(data.total || 0);
       setTotalVolume(data.totalVolume || 0);

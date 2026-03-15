@@ -328,24 +328,36 @@ async function refresh(): Promise<void> {
 
 // ── Public API ──
 
-/** Kick off warmup if cold, return true only if cache is ready NOW. Never blocks. */
+/** Kick off warmup if cold, return true if cache has usable data. Never blocks. */
 export function ensureReady(): boolean {
-  if (cacheState === "ready") return true;
+  // Data is usable if we have rows, regardless of cache state
+  if (cacheState === "ready" || fullRows.length > 0) {
+    // Still start background refresh if needed
+    if (cacheState !== "ready" && !warmupPromise) {
+      warmupPromise = refresh().finally(() => {
+        warmupPromise = null;
+        if (!refreshTimer) {
+          refreshTimer = setInterval(() => {
+            refresh().catch(() => {});
+          }, REFRESH_INTERVAL);
+        }
+      });
+    }
+    return true;
+  }
 
-  // Start warmup in background if not already running
+  // No data at all — start warmup in background
   if (!warmupPromise) {
     warmupPromise = refresh().finally(() => {
       warmupPromise = null;
-      // Start background refresh timer
       if (!refreshTimer) {
         refreshTimer = setInterval(() => {
-          refresh().catch(() => {}); // errors handled inside refresh()
+          refresh().catch(() => {});
         }, REFRESH_INTERVAL);
       }
     });
   }
 
-  // Don't block — caller should use fallback path
   return false;
 }
 
