@@ -86,7 +86,7 @@ export function getPipelineCache() {
   // Restore from sessionStorage if module var was lost (hot reload)
   if (!_pipelineCache) {
     const stored = ssGet<{ data: PipelineCache; params: string; fetchTime: number }>("pl_cache");
-    if (stored && stored.data && (Date.now() - stored.fetchTime) < STALE_MS) {
+    if (stored && stored.data) {
       _pipelineCache = stored.data;
       _pipelineParams = stored.params;
       _pipelineFetchTime = stored.fetchTime;
@@ -112,7 +112,7 @@ export function isPipelineFresh(params: string): boolean {
 export function getIntelCache() {
   if (!_intelRows) {
     const stored = ssGet<{ rows: PipelineRow[]; meta: typeof _intelMeta; fetchTime: number }>("intel_cache");
-    if (stored && stored.rows && (Date.now() - stored.fetchTime) < STALE_MS) {
+    if (stored && stored.rows) {
       _intelRows = stored.rows;
       _intelMeta = stored.meta;
       _intelFetchTime = stored.fetchTime;
@@ -138,7 +138,7 @@ export function isIntelFresh(): boolean {
 export function getMarketCache() {
   if (!_marketCache) {
     const stored = ssGet<{ data: typeof _marketCache; fetchTime: number }>("mkt_cache");
-    if (stored && stored.data && (Date.now() - stored.fetchTime) < STALE_MS) {
+    if (stored && stored.data) {
       _marketCache = stored.data;
       _marketFetchTime = stored.fetchTime;
     }
