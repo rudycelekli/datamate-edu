@@ -19,11 +19,33 @@ import {
   ChevronDown,
   Sparkles,
   BarChart3,
+  Clock,
 } from "lucide-react";
 
 interface PipelineRow {
   loanGuid: string;
   fields: Record<string, string>;
+}
+
+interface FilterOptions {
+  milestones: string[];
+  los: string[];
+  states: string[];
+  purposes: string[];
+  locks: string[];
+  programs: string[];
+}
+
+interface PipelineResponse {
+  rows: PipelineRow[];
+  total: number;
+  totalVolume: number;
+  page: number;
+  pageSize: number;
+  cacheAge: number;
+  filterOptions: FilterOptions;
+  _warming?: boolean;
+  _loadedSoFar?: number;
 }
 
 type SortDir = "asc" | "desc";
@@ -91,15 +113,31 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
 const pf = (f: Record<string, string>, canonical: string, fieldId?: string) =>
   f[canonical] || (fieldId ? f[`Fields.${fieldId}`] : "") || "";
 
+const formatCacheAge = (ms: number) => {
+  if (ms <= 0) return "just now";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  return `${min} min ago`;
+};
+
 export default function PipelinePage() {
   const router = useRouter();
   const [rows, setRows] = useState<PipelineRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalVolume, setTotalVolume] = useState(0);
+  const [cacheAge, setCacheAge] = useState(0);
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({
+    milestones: [], los: [], states: [], purposes: [], locks: [], programs: [],
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [isWarming, setIsWarming] = useState(false);
+  const [loadedSoFar, setLoadedSoFar] = useState(0);
   const pageSize = 50;
 
   // AI search
@@ -115,6 +153,7 @@ export default function PipelinePage() {
   const [lockFilter, setLockFilter] = useState("");
   const [stateFilter, setStateFilter] = useState("");
   const [purposeFilter, setPurposeFilter] = useState("");
+  const [programFilter, setProgramFilter] = useState("");
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [rateMin, setRateMin] = useState("");
@@ -129,20 +168,40 @@ export default function PipelinePage() {
     setError(null);
     try {
       const params = new URLSearchParams({
-        start: String(page * pageSize),
-        limit: String(pageSize),
+        page: String(page),
+        pageSize: String(pageSize),
+        sortField: sortKey,
+        sortDir: sortDir,
       });
       if (search) params.set("search", search);
+      if (milestoneFilter) params.set("milestone", milestoneFilter);
+      if (loFilter) params.set("lo", loFilter);
+      if (stateFilter) params.set("state", stateFilter);
+      if (purposeFilter) params.set("purpose", purposeFilter);
+      if (lockFilter) params.set("lock", lockFilter);
+      if (programFilter) params.set("program", programFilter);
+      if (amountMin) params.set("amountMin", amountMin);
+      if (amountMax) params.set("amountMax", amountMax);
+      if (rateMin) params.set("rateMin", rateMin);
+      if (rateMax) params.set("rateMax", rateMax);
+
       const res = await fetch(`/api/pipeline?${params}`);
       if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      setRows(Array.isArray(data) ? data : []);
+      const data: PipelineResponse = await res.json();
+
+      setRows(data.rows || []);
+      setTotal(data.total || 0);
+      setTotalVolume(data.totalVolume || 0);
+      setCacheAge(data.cacheAge || 0);
+      setIsWarming(!!data._warming);
+      setLoadedSoFar(data._loadedSoFar || 0);
+      if (data.filterOptions) setFilterOptions(data.filterOptions);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load pipeline");
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [page, search, sortKey, sortDir, milestoneFilter, loFilter, stateFilter, purposeFilter, lockFilter, programFilter, amountMin, amountMax, rateMin, rateMax]);
 
   useEffect(() => {
     fetch("/api/auth/test")
@@ -154,6 +213,23 @@ export default function PipelinePage() {
   useEffect(() => {
     fetchPipeline();
   }, [fetchPipeline]);
+
+  // Poll for warmup progress every 5s while cache is warming
+  useEffect(() => {
+    if (!isWarming) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch("/api/pipeline/stats");
+        const status = await res.json();
+        setLoadedSoFar(status.loadedSoFar || 0);
+        if (status.state === "ready") {
+          setIsWarming(false);
+          fetchPipeline(); // Refresh to get full cached data
+        }
+      } catch { /* ignore */ }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isWarming, fetchPipeline]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -192,97 +268,28 @@ export default function PipelinePage() {
     setAiError("");
   };
 
-  // Use AI results when active, otherwise standard rows
-  const sourceRows = aiRows ?? rows;
-
-  // Extract unique values for filter dropdowns
-  const filterOptions = useMemo(() => {
-    const milestones = new Set<string>();
-    const los = new Set<string>();
-    const locks = new Set<string>();
-    const states = new Set<string>();
-    const purposes = new Set<string>();
-    sourceRows.forEach((r) => {
-      const f = r.fields || {};
-      if (f["Loan.CurrentMilestoneName"]) milestones.add(f["Loan.CurrentMilestoneName"]);
-      if (f["Loan.LoanOfficerName"]) los.add(f["Loan.LoanOfficerName"]);
-      if (f["Loan.LockStatus"]) locks.add(f["Loan.LockStatus"]);
-      const state = pf(f, "Loan.SubjectPropertyState", "14");
-      if (state) states.add(state);
-      if (f["Loan.LoanPurpose"]) purposes.add(f["Loan.LoanPurpose"]);
-    });
-    return {
-      milestones: [...milestones].sort(),
-      los: [...los].sort(),
-      locks: [...locks].sort(),
-      states: [...states].sort(),
-      purposes: [...purposes].sort(),
-    };
-  }, [sourceRows]);
-
-  // Client-side filter + sort
-  const filteredRows = useMemo(() => {
-    let result = sourceRows.filter((r) => {
-      const f = r.fields || {};
-      if (milestoneFilter && f["Loan.CurrentMilestoneName"] !== milestoneFilter) return false;
-      if (loFilter && f["Loan.LoanOfficerName"] !== loFilter) return false;
-      if (lockFilter && f["Loan.LockStatus"] !== lockFilter) return false;
-      if (stateFilter && pf(f, "Loan.SubjectPropertyState", "14") !== stateFilter) return false;
-      if (purposeFilter && f["Loan.LoanPurpose"] !== purposeFilter) return false;
-      if (amountMin || amountMax) {
-        const amt = parseFloat(f["Loan.LoanAmount"] || "0") || 0;
-        if (amountMin && amt < parseFloat(amountMin)) return false;
-        if (amountMax && amt > parseFloat(amountMax)) return false;
-      }
-      if (rateMin || rateMax) {
-        const rate = parseFloat(pf(f, "Loan.NoteRatePercent", "3") || "0") || 0;
-        if (rateMin && rate < parseFloat(rateMin)) return false;
-        if (rateMax && rate > parseFloat(rateMax)) return false;
-      }
-      return true;
-    });
-
-    result = [...result].sort((a, b) => {
-      const fa = a.fields || {};
-      const fb = b.fields || {};
-      let va = "", vb = "";
-      switch (sortKey) {
-        case "loanNumber": va = fa["Loan.LoanNumber"] || ""; vb = fb["Loan.LoanNumber"] || ""; break;
-        case "borrower": va = `${fa["Loan.BorrowerLastName"] || ""} ${fa["Loan.BorrowerFirstName"] || ""}`; vb = `${fb["Loan.BorrowerLastName"] || ""} ${fb["Loan.BorrowerFirstName"] || ""}`; break;
-        case "amount":
-          return sortDir === "asc"
-            ? (parseFloat(fa["Loan.LoanAmount"] || "0") || 0) - (parseFloat(fb["Loan.LoanAmount"] || "0") || 0)
-            : (parseFloat(fb["Loan.LoanAmount"] || "0") || 0) - (parseFloat(fa["Loan.LoanAmount"] || "0") || 0);
-        case "rate": {
-          const ra = parseFloat(pf(fa, "Loan.NoteRatePercent", "3") || "0") || 0;
-          const rb = parseFloat(pf(fb, "Loan.NoteRatePercent", "3") || "0") || 0;
-          return sortDir === "asc" ? ra - rb : rb - ra;
-        }
-        case "milestone": va = fa["Loan.CurrentMilestoneName"] || ""; vb = fb["Loan.CurrentMilestoneName"] || ""; break;
-        case "lo": va = fa["Loan.LoanOfficerName"] || ""; vb = fb["Loan.LoanOfficerName"] || ""; break;
-        case "modified": va = fa["Loan.LastModified"] || ""; vb = fb["Loan.LastModified"] || ""; break;
-        case "closingDate": va = pf(fa, "Loan.ClosingDate", "748"); vb = pf(fb, "Loan.ClosingDate", "748"); break;
-        case "appDate": va = pf(fa, "", "745") || fa["Loan.DateCreated"] || ""; vb = pf(fb, "", "745") || fb["Loan.DateCreated"] || ""; break;
-        case "property": va = `${pf(fa, "Loan.SubjectPropertyCity", "12")} ${pf(fa, "Loan.SubjectPropertyState", "14")}`; vb = `${pf(fb, "Loan.SubjectPropertyCity", "12")} ${pf(fb, "Loan.SubjectPropertyState", "14")}`; break;
-      }
-      const cmp = va.localeCompare(vb);
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-
-    return result;
-  }, [sourceRows, milestoneFilter, loFilter, lockFilter, stateFilter, purposeFilter, amountMin, amountMax, rateMin, rateMax, sortKey, sortDir]);
-
-  const totalVolume = useMemo(
-    () => filteredRows.reduce((s, r) => s + (parseFloat(r.fields?.["Loan.LoanAmount"] || "0") || 0), 0),
-    [filteredRows],
-  );
+  // When AI search is active, show AI rows directly (client-side, no cache filtering)
+  const displayRows = aiRows ?? rows;
+  const displayTotal = aiRows ? aiRows.length : total;
+  const displayVolume = aiRows
+    ? aiRows.reduce((s, r) => s + (parseFloat(r.fields?.["Loan.LoanAmount"] || "0") || 0), 0)
+    : totalVolume;
 
   const toggleSort = (key: SortKey) => {
+    if (aiRows) return; // Don't change sort when AI search is active
+    setPage(0);
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir(key === "modified" || key === "amount" || key === "closingDate" || key === "appDate" ? "desc" : "asc"); }
   };
 
-  const activeFilterCount = [milestoneFilter, loFilter, lockFilter, stateFilter, purposeFilter, amountMin, amountMax, rateMin, rateMax].filter(Boolean).length;
+  const handleFilterChange = (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setPage(0);
+    setter(e.target.value);
+  };
+
+  const activeFilterCount = [milestoneFilter, loFilter, lockFilter, stateFilter, purposeFilter, programFilter, amountMin, amountMax, rateMin, rateMax].filter(Boolean).length;
+
+  const totalPages = Math.ceil(displayTotal / pageSize);
 
   const selectClass = "px-2.5 py-1.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg text-xs focus:outline-none focus:border-[var(--accent)] min-w-0";
 
@@ -304,6 +311,17 @@ export default function PipelinePage() {
             </Link>
           </div>
           <div className="flex items-center gap-2 text-xs">
+            {cacheAge > 0 && (
+              <span className="flex items-center gap-1 text-[var(--text-muted)]">
+                <Clock className="w-3 h-3" />
+                {formatCacheAge(cacheAge)}
+              </span>
+            )}
+            {isWarming && (
+              <span className="text-amber-600 text-[10px] font-medium">
+                Loading full pipeline... {loadedSoFar > 0 ? `${loadedSoFar.toLocaleString()} loans loaded` : "starting"}
+              </span>
+            )}
             <span className={`w-2 h-2 rounded-full ${connected === true ? "bg-emerald-500 pulse-dot" : connected === false ? "bg-red-500" : "bg-amber-500"}`} />
             <span className="text-[var(--text-muted)] hidden sm:inline">
               {connected === true ? "Connected" : connected === false ? "Disconnected" : "Connecting..."}
@@ -366,29 +384,31 @@ export default function PipelinePage() {
           <div className="glass-card p-4 flex items-center gap-3">
             <FileText className="w-5 h-5 text-[var(--accent)]" />
             <div>
-              <div className="text-xs text-[var(--text-muted)]">{aiRows !== null ? "AI Results" : "Showing"}</div>
-              <div className="text-lg font-semibold">{filteredRows.length}</div>
+              <div className="text-xs text-[var(--text-muted)]">{aiRows !== null ? "AI Results" : "Total Loans"}</div>
+              <div className="text-lg font-semibold">{displayTotal.toLocaleString()}</div>
             </div>
           </div>
           <div className="glass-card p-4 flex items-center gap-3">
             <DollarSign className="w-5 h-5 text-emerald-600" />
             <div>
               <div className="text-xs text-[var(--text-muted)]">Volume</div>
-              <div className="text-lg font-semibold">{formatCurrency(String(totalVolume))}</div>
+              <div className="text-lg font-semibold">{formatCurrency(String(displayVolume))}</div>
             </div>
           </div>
           <div className="glass-card p-4 flex items-center gap-3">
             <FileText className="w-5 h-5 text-[var(--accent)]" />
             <div>
-              <div className="text-xs text-[var(--text-muted)]">Page</div>
-              <div className="text-lg font-semibold">{aiRows !== null ? "AI" : page + 1}</div>
+              <div className="text-xs text-[var(--text-muted)]">Showing</div>
+              <div className="text-lg font-semibold">
+                {aiRows !== null ? displayRows.length : `${page * pageSize + 1}-${Math.min((page + 1) * pageSize, displayTotal)}`}
+              </div>
             </div>
           </div>
           <div className="glass-card p-4 flex items-center gap-3">
             <DollarSign className="w-5 h-5 text-emerald-600" />
             <div>
-              <div className="text-xs text-[var(--text-muted)]">Per Page</div>
-              <div className="text-lg font-semibold">{aiRows !== null ? filteredRows.length : pageSize}</div>
+              <div className="text-xs text-[var(--text-muted)]">Page</div>
+              <div className="text-lg font-semibold">{aiRows !== null ? "AI" : `${page + 1} of ${totalPages || 1}`}</div>
             </div>
           </div>
         </div>
@@ -398,7 +418,7 @@ export default function PipelinePage() {
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Milestone</label>
-              <select value={milestoneFilter} onChange={(e) => setMilestoneFilter(e.target.value)} className={selectClass}>
+              <select value={milestoneFilter} onChange={handleFilterChange(setMilestoneFilter)} className={selectClass}>
                 <option value="">All</option>
                 {filterOptions.milestones.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
@@ -406,7 +426,7 @@ export default function PipelinePage() {
             <div className="w-px h-6 bg-[var(--border)]" />
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">LO</label>
-              <select value={loFilter} onChange={(e) => setLoFilter(e.target.value)} className={selectClass}>
+              <select value={loFilter} onChange={handleFilterChange(setLoFilter)} className={selectClass}>
                 <option value="">All</option>
                 {filterOptions.los.map((lo) => <option key={lo} value={lo}>{lo}</option>)}
               </select>
@@ -414,7 +434,7 @@ export default function PipelinePage() {
             <div className="w-px h-6 bg-[var(--border)]" />
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">State</label>
-              <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} className={selectClass}>
+              <select value={stateFilter} onChange={handleFilterChange(setStateFilter)} className={selectClass}>
                 <option value="">All</option>
                 {filterOptions.states.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -422,7 +442,7 @@ export default function PipelinePage() {
             <div className="w-px h-6 bg-[var(--border)]" />
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Purpose</label>
-              <select value={purposeFilter} onChange={(e) => setPurposeFilter(e.target.value)} className={selectClass}>
+              <select value={purposeFilter} onChange={handleFilterChange(setPurposeFilter)} className={selectClass}>
                 <option value="">All</option>
                 {filterOptions.purposes.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
@@ -430,30 +450,38 @@ export default function PipelinePage() {
             <div className="w-px h-6 bg-[var(--border)]" />
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Lock</label>
-              <select value={lockFilter} onChange={(e) => setLockFilter(e.target.value)} className={selectClass}>
+              <select value={lockFilter} onChange={handleFilterChange(setLockFilter)} className={selectClass}>
                 <option value="">All</option>
                 {filterOptions.locks.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
             <div className="w-px h-6 bg-[var(--border)]" />
             <div className="flex items-center gap-1.5">
+              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Program</label>
+              <select value={programFilter} onChange={handleFilterChange(setProgramFilter)} className={selectClass}>
+                <option value="">All</option>
+                {filterOptions.programs.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div className="w-px h-6 bg-[var(--border)]" />
+            <div className="flex items-center gap-1.5">
               <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Amount</label>
-              <input type="number" value={amountMin} onChange={(e) => setAmountMin(e.target.value)} placeholder="Min" className={`${selectClass} w-24`} />
+              <input type="number" value={amountMin} onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} placeholder="Min" className={`${selectClass} w-24`} />
               <span className="text-xs text-[var(--text-muted)]">-</span>
-              <input type="number" value={amountMax} onChange={(e) => setAmountMax(e.target.value)} placeholder="Max" className={`${selectClass} w-24`} />
+              <input type="number" value={amountMax} onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} placeholder="Max" className={`${selectClass} w-24`} />
             </div>
             <div className="w-px h-6 bg-[var(--border)]" />
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Rate %</label>
-              <input type="number" step="0.125" value={rateMin} onChange={(e) => setRateMin(e.target.value)} placeholder="Min" className={`${selectClass} w-20`} />
+              <input type="number" step="0.125" value={rateMin} onChange={(e) => { setRateMin(e.target.value); setPage(0); }} placeholder="Min" className={`${selectClass} w-20`} />
               <span className="text-xs text-[var(--text-muted)]">-</span>
-              <input type="number" step="0.125" value={rateMax} onChange={(e) => setRateMax(e.target.value)} placeholder="Max" className={`${selectClass} w-20`} />
+              <input type="number" step="0.125" value={rateMax} onChange={(e) => { setRateMax(e.target.value); setPage(0); }} placeholder="Max" className={`${selectClass} w-20`} />
             </div>
             {activeFilterCount > 0 && (
               <>
                 <div className="w-px h-6 bg-[var(--border)]" />
                 <button
-                  onClick={() => { setMilestoneFilter(""); setLoFilter(""); setLockFilter(""); setStateFilter(""); setPurposeFilter(""); setAmountMin(""); setAmountMax(""); setRateMin(""); setRateMax(""); }}
+                  onClick={() => { setMilestoneFilter(""); setLoFilter(""); setLockFilter(""); setStateFilter(""); setPurposeFilter(""); setProgramFilter(""); setAmountMin(""); setAmountMax(""); setRateMin(""); setRateMax(""); setPage(0); }}
                   className="text-xs text-[var(--accent)] hover:underline whitespace-nowrap"
                 >
                   Clear all ({activeFilterCount})
@@ -472,7 +500,7 @@ export default function PipelinePage() {
         )}
 
         {/* Loading */}
-        {(loading || aiLoading) && sourceRows.length === 0 && (
+        {(loading || aiLoading) && displayRows.length === 0 && (
           <div className="glass-card p-12 flex flex-col items-center justify-center gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-[var(--accent)]" />
             <p className="text-sm text-[var(--text-muted)]">Loading loans...</p>
@@ -480,7 +508,7 @@ export default function PipelinePage() {
         )}
 
         {/* Table */}
-        {(!(loading || aiLoading) || sourceRows.length > 0) && (
+        {(!(loading || aiLoading) || displayRows.length > 0) && (
           <div className="glass-card overflow-hidden">
             <div className="overflow-x-auto max-h-[calc(100vh-420px)]">
               <table className="data-table">
@@ -520,7 +548,7 @@ export default function PipelinePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map((row) => {
+                  {displayRows.map((row) => {
                     const f = row.fields || {};
                     return (
                       <tr key={row.loanGuid} onClick={() => router.push(`/loan/${row.loanGuid}`)}>
@@ -565,16 +593,20 @@ export default function PipelinePage() {
         {/* Pagination */}
         <div className="flex items-center justify-between mt-4">
           <p className="text-xs text-[var(--text-muted)]">
-            Showing {page * pageSize + 1}-{page * pageSize + filteredRows.length} loans
+            {aiRows !== null
+              ? `Showing ${displayRows.length} AI results`
+              : `Showing ${page * pageSize + 1}-${Math.min((page + 1) * pageSize, displayTotal)} of ${displayTotal.toLocaleString()} loans`}
           </p>
-          <div className="flex gap-2">
-            <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[var(--border)] rounded-lg text-xs hover:bg-[var(--bg-secondary)] disabled:opacity-30">
-              <ChevronLeft className="w-3 h-3" /> Prev
-            </button>
-            <button onClick={() => setPage((p) => p + 1)} disabled={rows.length < pageSize} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[var(--border)] rounded-lg text-xs hover:bg-[var(--bg-secondary)] disabled:opacity-30">
-              Next <ChevronRight className="w-3 h-3" />
-            </button>
-          </div>
+          {aiRows === null && (
+            <div className="flex gap-2">
+              <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[var(--border)] rounded-lg text-xs hover:bg-[var(--bg-secondary)] disabled:opacity-30">
+                <ChevronLeft className="w-3 h-3" /> Prev
+              </button>
+              <button onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages - 1} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[var(--border)] rounded-lg text-xs hover:bg-[var(--bg-secondary)] disabled:opacity-30">
+                Next <ChevronRight className="w-3 h-3" />
+              </button>
+            </div>
+          )}
         </div>
       </main>
     </div>

@@ -1,27 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ensureReady, getAIContext } from "@/lib/pipeline-cache";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-const SYSTEM_PROMPT = `You are a mortgage analytics AI for Premier Lending. You receive the full pipeline dataset and answer user questions by returning a JSON object that describes the chart(s) to render and the processed data.
+const SYSTEM_PROMPT = `You are a mortgage analytics AI for Premier Lending. You receive PRE-AGGREGATED pipeline statistics (covering the FULL pipeline of all loans) plus a stratified sample, and answer user questions by returning a JSON object that describes the chart(s) to render and the processed data.
 
 Today is ${new Date().toISOString().slice(0, 10)}.
 
-## Available Encompass Fields in the Data
-Each loan row has a "fields" object with these keys (may be empty):
-- Loan.LoanNumber - loan number
-- Loan.LoanAmount - dollar amount (string)
-- Loan.LoanProgram - e.g. "Conventional", "FHA", "VA"
-- Loan.LoanPurpose - "Purchase", "NoCash-Out Refinance", "Cash-Out Refinance"
-- Loan.CurrentMilestoneName - pipeline stage
-- Loan.LoanOfficerName - LO name
-- Loan.LockStatus - "Locked", "Not Locked", "Lock Expired"
-- Loan.NoteRatePercent - interest rate
-- Loan.SubjectPropertyState or Fields.14 - state code (2-letter)
-- Loan.DateCreated - creation date
-- Loan.LastModified - last modified
-- Loan.LienPosition - "FirstLien", "SecondLien"
-- Loan.BorrowerName - borrower name
-- Loan.Channel - channel
+## Data Format
+You receive:
+1. **stats**: Pre-aggregated breakdowns of ALL loans in the pipeline:
+   - totalLoans, totalVolume
+   - byMilestone: { [name]: { units, volume } }
+   - byState: { [code]: { units, volume } }
+   - byProgram: { [name]: { units, volume } }
+   - byPurpose: { [name]: { units, volume } }
+   - byLO: { [name]: { units, volume } }
+   - byLock: { [status]: count }
+   - avgRate: weighted average interest rate
+   - rateDistribution: { [bucket]: count }
+
+2. **sample**: ~200 representative loans with fields: amt, prog, purp, ms, lo, lock, rate, st, dt, lien, ln, channel, closingDate, lockExp, modified
+
+## IMPORTANT
+- The stats cover ALL loans (30,000-70,000+), not just the sample.
+- Use the pre-aggregated stats for any aggregate questions (totals, breakdowns, comparisons).
+- Only use the sample for questions about individual loan patterns or distributions that aren't covered by stats.
 
 ## Response Format
 Return ONLY valid JSON (no markdown fencing). The response must have:
@@ -43,13 +47,12 @@ Return ONLY valid JSON (no markdown fencing). The response must have:
 }
 
 ## Rules
-- Analyze the RAW pipeline data provided. Do the aggregation yourself.
+- Use the pre-aggregated stats to answer. Convert them into chart data arrays.
 - Return 1-3 charts maximum per question.
 - For currency values use raw numbers (not formatted strings).
-- Group/aggregate data appropriately (by state, LO, program, milestone, etc.).
-- ALWAYS sort the data array in the response. Sort descending by the primary numeric value (largest first) for bar/horizontal-bar/pie/table charts. Sort chronologically for line/time-series charts. Never return unsorted data.
+- ALWAYS sort the data array in the response. Sort descending by the primary numeric value (largest first) for bar/horizontal-bar/pie/table charts. Sort chronologically for line/time-series charts.
 - Limit "data" for bar/horizontal-bar charts to top 15-20 items max for readability.
-- ALWAYS include a "fullData" array with ALL aggregated rows (no limit), sorted the same way. This is used for the underlying data table and CSV export. If no truncation is needed (e.g. pie with 5 slices), fullData can equal data.
+- ALWAYS include a "fullData" array with ALL aggregated rows (no limit), sorted the same way.
 - For tables, use type "table" and data as array of objects with column keys.
 - Always provide a clear summary with specific numbers.
 - If the question is about comparison, use multiple datasets or charts.`;
@@ -60,29 +63,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
     }
 
-    const { question, pipelineData } = await req.json();
+    const { question } = await req.json();
     if (!question || typeof question !== "string") {
       return NextResponse.json({ error: "Missing question" }, { status: 400 });
     }
 
-    // Build a compact summary of the pipeline data to fit in context
-    const rows = Array.isArray(pipelineData) ? pipelineData : [];
-    const compactRows = rows.slice(0, 500).map((r: { fields?: Record<string, string> }) => {
-      const f = r.fields || {};
-      return {
-        amt: f["Loan.LoanAmount"] || "",
-        prog: f["Loan.LoanProgram"] || "",
-        purp: f["Loan.LoanPurpose"] || "",
-        ms: f["Loan.CurrentMilestoneName"] || "",
-        lo: f["Loan.LoanOfficerName"] || "",
-        lock: f["Loan.LockStatus"] || "",
-        rate: f["Loan.NoteRatePercent"] || "",
-        st: f["Loan.SubjectPropertyState"] || f["Fields.14"] || "",
-        dt: f["Loan.DateCreated"] || "",
-        lien: f["Loan.LienPosition"] || "",
-        ln: f["Loan.LoanNumber"] || "",
-      };
-    });
+    // Read from server cache (non-blocking warmup)
+    const ready = ensureReady();
+    if (!ready) {
+      return NextResponse.json({ error: "Pipeline cache is still warming up. Please try again in a minute." }, { status: 503 });
+    }
+    const { stats, sample, totalLoans } = getAIContext(question);
+
+    const userContent = `Pipeline statistics (${totalLoans.toLocaleString()} total loans):
+
+AGGREGATED STATS:
+${JSON.stringify(stats, null, 0)}
+
+SAMPLE (${sample.length} representative loans):
+${JSON.stringify(sample)}
+
+Question: ${question}`;
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest) {
         system: SYSTEM_PROMPT,
         messages: [{
           role: "user",
-          content: `Pipeline data (${rows.length} loans):\n${JSON.stringify(compactRows)}\n\nQuestion: ${question}`,
+          content: userContent,
         }],
       }),
     });

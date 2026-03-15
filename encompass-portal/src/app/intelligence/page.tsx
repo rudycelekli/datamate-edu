@@ -19,6 +19,65 @@ interface PipelineRow {
   fields: Record<string, string>;
 }
 
+interface CompactRow {
+  guid: string;
+  amt: number;
+  prog: string;
+  purp: string;
+  ms: string;
+  lo: string;
+  lock: string;
+  rate: number;
+  st: string;
+  dt: string;
+  lien: string;
+  ln: string;
+  channel: string;
+  closingDate: string;
+  lockExp: string;
+  modified: string;
+}
+
+interface CompactResponse {
+  rows: CompactRow[];
+  total: number;
+  cacheAge: number;
+  filterOptions: {
+    milestones: string[];
+    los: string[];
+    states: string[];
+    purposes: string[];
+    locks: string[];
+    programs: string[];
+  };
+}
+
+/** Map compact row to PipelineRow so existing useMemo aggregations work unchanged */
+function compactToPipelineRow(c: CompactRow): PipelineRow {
+  return {
+    loanGuid: c.guid,
+    fields: {
+      "Loan.LoanNumber": c.ln,
+      "Loan.LoanAmount": String(c.amt),
+      "Loan.LoanProgram": c.prog,
+      "Loan.LoanPurpose": c.purp,
+      "Loan.CurrentMilestoneName": c.ms,
+      "Loan.LoanOfficerName": c.lo,
+      "Loan.LockStatus": c.lock,
+      "Loan.NoteRatePercent": String(c.rate),
+      "Loan.SubjectPropertyState": c.st,
+      "Fields.14": c.st,
+      "Loan.DateCreated": c.dt,
+      "Loan.LienPosition": c.lien,
+      "Loan.Channel": c.channel,
+      "Loan.ClosingDate": c.closingDate,
+      "Fields.748": c.closingDate,
+      "Loan.LockExpirationDate": c.lockExp,
+      "Loan.LastModified": c.modified,
+    },
+  };
+}
+
 const COLORS = [
   "#EA580C", "#2563EB", "#16A34A", "#D97706", "#7C3AED", "#DC2626",
   "#0891B2", "#4F46E5", "#059669", "#E11D48", "#8B5CF6", "#F59E0B",
@@ -58,6 +117,9 @@ export default function IntelligencePage() {
   const [error, setError] = useState("");
   const [expandedSection, setExpandedSection] = useState<Section | null>("snapshot");
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [cacheAge, setCacheAge] = useState(0);
+  const [totalInCache, setTotalInCache] = useState(0);
+  const [warmingProgress, setWarmingProgress] = useState(0);
 
   // Filters
   const [filterState, setFilterState] = useState("");
@@ -99,10 +161,23 @@ export default function IntelligencePage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/pipeline?start=0&limit=500");
+      const res = await fetch("/api/pipeline?all=true&compact=true");
       if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      setRows(Array.isArray(data) ? data : []);
+      const data: CompactResponse | PipelineRow[] = await res.json();
+
+      if ("rows" in data && Array.isArray((data as CompactResponse).rows) && (data as CompactResponse).rows.length > 0 && "amt" in (data as CompactResponse).rows[0]) {
+        // Compact response from cache
+        const compact = data as CompactResponse;
+        setRows(compact.rows.map(compactToPipelineRow));
+        setCacheAge(compact.cacheAge || 0);
+        setTotalInCache(compact.total || compact.rows.length);
+      } else if (Array.isArray(data)) {
+        // Legacy array response (fallback during warmup)
+        setRows(data);
+        setTotalInCache(data.length);
+      } else {
+        setRows([]);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -428,7 +503,7 @@ export default function IntelligencePage() {
       const res = await fetch("/api/intelligence/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, pipelineData: rows }),
+        body: JSON.stringify({ question }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || "Failed");
@@ -544,12 +619,33 @@ export default function IntelligencePage() {
     );
   };
 
+  // Poll warmup progress while loading
+  useEffect(() => {
+    if (!loading) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch("/api/pipeline/stats");
+        const status = await res.json();
+        setWarmingProgress(status.loadedSoFar || 0);
+        if (status.state === "ready") {
+          clearInterval(interval);
+          fetchAll();
+        }
+      } catch { /* ignore */ }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [loading, fetchAll]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4">
         <Loader2 className="w-10 h-10 animate-spin text-[var(--accent)]" />
         <p className="text-sm text-[var(--text-muted)]">Loading pipeline data for analytics...</p>
-        <p className="text-xs text-[var(--text-muted)]">Fetching all loans from Encompass</p>
+        <p className="text-xs text-[var(--text-muted)]">
+          {warmingProgress > 0
+            ? `${warmingProgress.toLocaleString()} loans loaded so far...`
+            : "Waiting for cache to warm up"}
+        </p>
       </div>
     );
   }
@@ -574,6 +670,9 @@ export default function IntelligencePage() {
             </Link>
           </div>
           <div className="flex items-center gap-2 text-xs">
+            {totalInCache > 0 && (
+              <span className="text-[var(--text-muted)] hidden sm:inline mr-2">{totalInCache.toLocaleString()} loans</span>
+            )}
             <span className={`w-2 h-2 rounded-full ${connected === true ? "bg-emerald-500 pulse-dot" : connected === false ? "bg-red-500" : "bg-amber-500"}`} />
             <span className="text-[var(--text-muted)] hidden sm:inline">
               {connected === true ? "Connected" : connected === false ? "Disconnected" : "Connecting..."}
@@ -832,7 +931,7 @@ export default function IntelligencePage() {
               {filterProgram && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs">{filterProgram}<button onClick={() => setFilterProgram("")}><X className="w-3 h-3" /></button></span>}
               {filterPurpose && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-200 rounded text-xs">{filterPurpose}<button onClick={() => setFilterPurpose("")}><X className="w-3 h-3" /></button></span>}
               {filterLock && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-cyan-50 border border-cyan-200 rounded text-xs">{filterLock}<button onClick={() => setFilterLock("")}><X className="w-3 h-3" /></button></span>}
-              <span className="text-xs text-[var(--text-muted)] self-center ml-1">Showing {filteredRows.length} of {rows.length} loans</span>
+              <span className="text-xs text-[var(--text-muted)] self-center ml-1">Showing {filteredRows.length} of {rows.length.toLocaleString()} loans{cacheAge > 0 ? ` (updated ${Math.floor(cacheAge / 60000)} min ago)` : ""}</span>
             </div>
           )}
         </div>

@@ -3,3 +3,10 @@ node_modules/
 .env.local
 .env*.local
 out/
+
+# Client data exports (PII - never push)
+scripts/export-client-list.ts
+data/
+*.csv
+*.ipynb
+.ipynb_checkpoints/

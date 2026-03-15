@@ -6,3 +6,6 @@ out/
 .DS_Store
 *.xlsm
 *.ipynb
+*.csv
+.ipynb_checkpoints/
+data/

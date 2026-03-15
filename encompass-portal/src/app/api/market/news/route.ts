@@ -20,7 +20,7 @@ interface NewsItem {
 }
 
 function extractCDATA(text: string): string {
-  const m = text.match(/<!\[CDATA\[(.*?)\]\]>/s);
+  const m = text.match(/<!\[CDATA\[([\s\S]*?)\]\]>/);
   return m ? m[1] : text;
 }
 
