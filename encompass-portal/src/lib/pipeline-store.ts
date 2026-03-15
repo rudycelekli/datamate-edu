@@ -104,7 +104,10 @@ export function setPipelineCache(data: PipelineCache, params: string) {
 
 export function isPipelineFresh(params: string): boolean {
   const cache = getPipelineCache(); // triggers restore if needed
-  return cache.data !== null && _pipelineParams === params && (Date.now() - _pipelineFetchTime) < STALE_MS;
+  if (!cache.data) return false;
+  // Warming/partial data is never "fresh" — always re-fetch once full cache is ready
+  if (cache.data._warming) return false;
+  return _pipelineParams === params && (Date.now() - _pipelineFetchTime) < STALE_MS;
 }
 
 // ── Intelligence page cache ──

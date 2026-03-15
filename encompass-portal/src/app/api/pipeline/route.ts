@@ -95,12 +95,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       rows: pageRows,
       total: allWarmup.length,
-      totalVolume: 0,
+      totalVolume: allWarmup.reduce((s, r) => s + (parseFloat((r as { fields?: Record<string, string> }).fields?.["Loan.LoanAmount"] || "0") || 0), 0),
       page,
       pageSize,
       cacheAge: 0,
       filterOptions: { milestones: [], los: [], states: [], purposes: [], locks: [], programs: [] },
-      _warming: status.state === "warming",
+      _warming: true,
       _loadedSoFar: status.loadedSoFar,
     });
   } catch (err: unknown) {

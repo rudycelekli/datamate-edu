@@ -191,7 +191,10 @@ export default function PipelinePage() {
     // Skip fetch if shared cache is fresh and params match
     if (!force && isPipelineFresh(params.toString())) return;
 
-    setLoading(true);
+    // Only show loading spinner on first load (no data yet).
+    // If we already have data, refresh silently in the background.
+    const hasData = rows.length > 0;
+    if (!hasData) setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/pipeline?${params}`);
@@ -209,11 +212,12 @@ export default function PipelinePage() {
       // Persist in shared store for instant restore on navigation
       setPipelineCache(data, params.toString());
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load pipeline");
+      // On background refresh failure, keep existing data - only show error if no data
+      if (!hasData) setError(err instanceof Error ? err.message : "Failed to load pipeline");
     } finally {
       setLoading(false);
     }
-  }, [page, search, sortKey, sortDir, milestoneFilter, loFilter, stateFilter, purposeFilter, lockFilter, programFilter, amountMin, amountMax, rateMin, rateMax, dateFrom, dateTo]);
+  }, [page, search, sortKey, sortDir, milestoneFilter, loFilter, stateFilter, purposeFilter, lockFilter, programFilter, amountMin, amountMax, rateMin, rateMax, dateFrom, dateTo, rows.length]);
 
   useEffect(() => {
     fetchPipeline();
@@ -230,7 +234,7 @@ export default function PipelinePage() {
         setWarmingStatus(status.state !== "ready", status.loadedSoFar || 0, undefined, status.total);
         if (status.state === "ready") {
           setIsWarming(false);
-          fetchPipeline(); // Refresh to get full cached data
+          fetchPipeline(true); // Force refresh to get full cached data
         }
       } catch { /* ignore */ }
     }, 5000);
