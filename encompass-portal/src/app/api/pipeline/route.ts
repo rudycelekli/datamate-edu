@@ -74,7 +74,13 @@ export async function GET(req: NextRequest) {
         dateFrom, dateTo,
       });
 
-      return NextResponse.json(result);
+      // Signal if warmup is still loading more data
+      const status = getStatus();
+      const stillWarming = status.loadedSoFar > status.totalRows;
+      return NextResponse.json({
+        ...result,
+        ...(stillWarming ? { _warming: true, _loadedSoFar: status.loadedSoFar } : {}),
+      });
     }
 
     // ── Fallback: direct Encompass query during warmup ──

@@ -194,9 +194,10 @@ async function fetchAllLoans(): Promise<PipelineRow[]> {
   let lastProgressiveUpdate = 0;
 
   // Progressively make data available during warmup so pages aren't blocked.
-  // Updates every 2000 new rows so queries/Intelligence work with partial data.
+  // First update at 500 rows (meaningful batch), then every 5000 rows.
   function progressiveUpdate() {
-    if (allRows.length - lastProgressiveUpdate < 2000 && lastProgressiveUpdate > 0) return;
+    const threshold = lastProgressiveUpdate === 0 ? 500 : 5000;
+    if (allRows.length - lastProgressiveUpdate < threshold) return;
     lastProgressiveUpdate = allRows.length;
     fullRows = [...allRows];
     compactRows = allRows.map(toCompact);
@@ -204,8 +205,8 @@ async function fetchAllLoans(): Promise<PipelineRow[]> {
     lastRefreshTime = new Date();
     if (cacheState !== "ready") {
       cacheState = "ready";
-      console.log(`[pipeline-cache] Progressive: ${allRows.length} loans now available`);
     }
+    console.log(`[pipeline-cache] Progressive: ${allRows.length} loans now available`);
   }
 
   const months = generateMonthWindows();

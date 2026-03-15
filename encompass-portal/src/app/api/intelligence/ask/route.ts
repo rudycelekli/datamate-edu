@@ -69,12 +69,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing question" }, { status: 400 });
     }
 
-    // Read from server cache (non-blocking warmup)
-    const ready = ensureReady();
-    if (!ready) {
-      return NextResponse.json({ error: "Pipeline cache is still warming up. Please try again in a minute." }, { status: 503 });
-    }
+    // Kick off warmup if cold; never block the user
+    ensureReady();
     const { stats, sample, totalLoans } = getAIContext(question, filters);
+    if (totalLoans === 0) {
+      return NextResponse.json({ error: "No pipeline data loaded yet. The cache is warming up — please try again in about 30 seconds." }, { status: 503 });
+    }
 
     // Build filter context string for Claude
     const activeFilters: string[] = [];
