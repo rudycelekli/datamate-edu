@@ -121,23 +121,28 @@ const formatCacheAge = (ms: number) => {
   return `${min} min ago`;
 };
 
+// Module-level cache: survives component unmount/remount during client-side navigation
+let _cachedResponse: PipelineResponse | null = null;
+let _cachedParams = "";
+let _cachedConnected: boolean | null = null;
+
 export default function PipelinePage() {
   const router = useRouter();
-  const [rows, setRows] = useState<PipelineRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [totalVolume, setTotalVolume] = useState(0);
-  const [cacheAge, setCacheAge] = useState(0);
-  const [filterOptions, setFilterOptions] = useState<FilterOptions>({
-    milestones: [], los: [], states: [], purposes: [], locks: [], programs: [],
-  });
-  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<PipelineRow[]>(_cachedResponse?.rows || []);
+  const [total, setTotal] = useState(_cachedResponse?.total || 0);
+  const [totalVolume, setTotalVolume] = useState(_cachedResponse?.totalVolume || 0);
+  const [cacheAge, setCacheAge] = useState(_cachedResponse?.cacheAge || 0);
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>(
+    _cachedResponse?.filterOptions || { milestones: [], los: [], states: [], purposes: [], locks: [], programs: [] },
+  );
+  const [loading, setLoading] = useState(!_cachedResponse);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const [connected, setConnected] = useState<boolean | null>(null);
-  const [isWarming, setIsWarming] = useState(false);
-  const [loadedSoFar, setLoadedSoFar] = useState(0);
+  const [connected, setConnected] = useState<boolean | null>(_cachedConnected);
+  const [isWarming, setIsWarming] = useState(_cachedResponse?._warming || false);
+  const [loadedSoFar, setLoadedSoFar] = useState(_cachedResponse?._loadedSoFar || 0);
   const pageSize = 50;
 
   // AI search
@@ -158,6 +163,8 @@ export default function PipelinePage() {
   const [amountMax, setAmountMax] = useState("");
   const [rateMin, setRateMin] = useState("");
   const [rateMax, setRateMax] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   // Sort
   const [sortKey, setSortKey] = useState<SortKey>("modified");
@@ -184,6 +191,8 @@ export default function PipelinePage() {
       if (amountMax) params.set("amountMax", amountMax);
       if (rateMin) params.set("rateMin", rateMin);
       if (rateMax) params.set("rateMax", rateMax);
+      if (dateFrom) params.set("dateFrom", dateFrom);
+      if (dateTo) params.set("dateTo", dateTo);
 
       const res = await fetch(`/api/pipeline?${params}`);
       if (!res.ok) throw new Error(await res.text());
@@ -196,18 +205,23 @@ export default function PipelinePage() {
       setIsWarming(!!data._warming);
       setLoadedSoFar(data._loadedSoFar || 0);
       if (data.filterOptions) setFilterOptions(data.filterOptions);
+
+      // Persist in module-level cache for instant restore on navigation
+      _cachedResponse = data;
+      _cachedParams = params.toString();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load pipeline");
     } finally {
       setLoading(false);
     }
-  }, [page, search, sortKey, sortDir, milestoneFilter, loFilter, stateFilter, purposeFilter, lockFilter, programFilter, amountMin, amountMax, rateMin, rateMax]);
+  }, [page, search, sortKey, sortDir, milestoneFilter, loFilter, stateFilter, purposeFilter, lockFilter, programFilter, amountMin, amountMax, rateMin, rateMax, dateFrom, dateTo]);
 
   useEffect(() => {
+    if (_cachedConnected !== null) return; // Already checked
     fetch("/api/auth/test")
       .then((r) => r.json())
-      .then((d) => setConnected(d.success))
-      .catch(() => setConnected(false));
+      .then((d) => { setConnected(d.success); _cachedConnected = d.success; })
+      .catch(() => { setConnected(false); _cachedConnected = false; });
   }, []);
 
   useEffect(() => {
@@ -287,7 +301,7 @@ export default function PipelinePage() {
     setter(e.target.value);
   };
 
-  const activeFilterCount = [milestoneFilter, loFilter, lockFilter, stateFilter, purposeFilter, programFilter, amountMin, amountMax, rateMin, rateMax].filter(Boolean).length;
+  const activeFilterCount = [milestoneFilter, loFilter, lockFilter, stateFilter, purposeFilter, programFilter, amountMin, amountMax, rateMin, rateMax, dateFrom, dateTo].filter(Boolean).length;
 
   const totalPages = Math.ceil(displayTotal / pageSize);
 
@@ -477,11 +491,18 @@ export default function PipelinePage() {
               <span className="text-xs text-[var(--text-muted)]">-</span>
               <input type="number" step="0.125" value={rateMax} onChange={(e) => { setRateMax(e.target.value); setPage(0); }} placeholder="Max" className={`${selectClass} w-20`} />
             </div>
+            <div className="w-px h-6 bg-[var(--border)]" />
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Date</label>
+              <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(0); }} className={`${selectClass} w-32`} />
+              <span className="text-xs text-[var(--text-muted)]">-</span>
+              <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(0); }} className={`${selectClass} w-32`} />
+            </div>
             {activeFilterCount > 0 && (
               <>
                 <div className="w-px h-6 bg-[var(--border)]" />
                 <button
-                  onClick={() => { setMilestoneFilter(""); setLoFilter(""); setLockFilter(""); setStateFilter(""); setPurposeFilter(""); setProgramFilter(""); setAmountMin(""); setAmountMax(""); setRateMin(""); setRateMax(""); setPage(0); }}
+                  onClick={() => { setMilestoneFilter(""); setLoFilter(""); setLockFilter(""); setStateFilter(""); setPurposeFilter(""); setProgramFilter(""); setAmountMin(""); setAmountMax(""); setRateMin(""); setRateMax(""); setDateFrom(""); setDateTo(""); setPage(0); }}
                   className="text-xs text-[var(--accent)] hover:underline whitespace-nowrap"
                 >
                   Clear all ({activeFilterCount})

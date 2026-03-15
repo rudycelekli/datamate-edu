@@ -110,15 +110,18 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
 
 type Section = "snapshot" | "geography" | "characteristics" | "distribution" | "timeline" | "officers" | "performance" | "crosstab";
 
+// Module-level cache: survives component unmount/remount during client-side navigation
+let _cachedIntelRows: PipelineRow[] | null = null;
+let _cachedIntelMeta: { cacheAge: number; total: number } | null = null;
 
 export default function IntelligencePage() {
-  const [rows, setRows] = useState<PipelineRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<PipelineRow[]>(_cachedIntelRows || []);
+  const [loading, setLoading] = useState(!_cachedIntelRows);
   const [error, setError] = useState("");
   const [expandedSection, setExpandedSection] = useState<Section | null>("snapshot");
   const [connected, setConnected] = useState<boolean | null>(null);
-  const [cacheAge, setCacheAge] = useState(0);
-  const [totalInCache, setTotalInCache] = useState(0);
+  const [cacheAge, setCacheAge] = useState(_cachedIntelMeta?.cacheAge || 0);
+  const [totalInCache, setTotalInCache] = useState(_cachedIntelMeta?.total || 0);
   const [warmingProgress, setWarmingProgress] = useState(0);
 
   // Filters
@@ -158,7 +161,8 @@ export default function IntelligencePage() {
   const [aiShowDataIdx, setAiShowDataIdx] = useState<number | null>(null);
 
   const fetchAll = useCallback(async () => {
-    setLoading(true);
+    // Only show loading spinner if we don't have cached data
+    if (!_cachedIntelRows) setLoading(true);
     setError("");
     try {
       const res = await fetch("/api/pipeline?all=true&compact=true");
@@ -168,13 +172,19 @@ export default function IntelligencePage() {
       if ("rows" in data && Array.isArray((data as CompactResponse).rows) && (data as CompactResponse).rows.length > 0 && "amt" in (data as CompactResponse).rows[0]) {
         // Compact response from cache
         const compact = data as CompactResponse;
-        setRows(compact.rows.map(compactToPipelineRow));
+        const mapped = compact.rows.map(compactToPipelineRow);
+        setRows(mapped);
         setCacheAge(compact.cacheAge || 0);
         setTotalInCache(compact.total || compact.rows.length);
+        // Save to module-level cache for instant restore on navigation
+        _cachedIntelRows = mapped;
+        _cachedIntelMeta = { cacheAge: compact.cacheAge || 0, total: compact.total || compact.rows.length };
       } else if (Array.isArray(data)) {
         // Legacy array response (fallback during warmup)
         setRows(data);
         setTotalInCache(data.length);
+        _cachedIntelRows = data;
+        _cachedIntelMeta = { cacheAge: 0, total: data.length };
       } else {
         setRows([]);
       }

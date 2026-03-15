@@ -52,6 +52,8 @@ export interface PipelineQueryParams {
   amountMax?: number;
   rateMin?: number;
   rateMax?: number;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export interface PipelineQueryResult {
@@ -349,6 +351,8 @@ export function queryPipeline(params: PipelineQueryParams): PipelineQueryResult 
     amountMax,
     rateMin,
     rateMax,
+    dateFrom,
+    dateTo,
   } = params;
 
   // Filter
@@ -391,6 +395,17 @@ export function queryPipeline(params: PipelineQueryParams): PipelineQueryResult 
       if (rateMin !== undefined && rate < rateMin) return false;
       if (rateMax !== undefined && rate > rateMax) return false;
       return true;
+    });
+  }
+
+  if (dateFrom || dateTo) {
+    const fromMs = dateFrom ? new Date(dateFrom).getTime() : 0;
+    const toMs = dateTo ? new Date(dateTo + "T23:59:59").getTime() : Infinity;
+    filtered = filtered.filter((r) => {
+      const dtStr = r.fields?.["Loan.DateCreated"] || pf(r.fields || {}, "", "745") || "";
+      if (!dtStr) return false;
+      const dtMs = new Date(dtStr).getTime();
+      return dtMs >= fromMs && dtMs <= toMs;
     });
   }
 

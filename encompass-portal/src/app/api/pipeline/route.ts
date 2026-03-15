@@ -64,11 +64,14 @@ export async function GET(req: NextRequest) {
       const amountMax = searchParams.get("amountMax") ? parseFloat(searchParams.get("amountMax")!) : undefined;
       const rateMin = searchParams.get("rateMin") ? parseFloat(searchParams.get("rateMin")!) : undefined;
       const rateMax = searchParams.get("rateMax") ? parseFloat(searchParams.get("rateMax")!) : undefined;
+      const dateFrom = searchParams.get("dateFrom") || undefined;
+      const dateTo = searchParams.get("dateTo") || undefined;
 
       const result = queryPipeline({
         page, pageSize, search, sortField, sortDir,
         milestone, lo, state, purpose, lock, program,
         amountMin, amountMax, rateMin, rateMax,
+        dateFrom, dateTo,
       });
 
       return NextResponse.json(result);
