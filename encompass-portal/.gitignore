@@ -10,3 +10,6 @@ data/
 *.csv
 *.ipynb
 .ipynb_checkpoints/
+
+# Milo AI PDF chunks (generated at runtime)
+docs/MIlo AI/.chunks/

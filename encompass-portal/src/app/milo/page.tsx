@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import {
   Send, Loader2, Trash2, BarChart3, Sparkles, BookOpen,
-  MessageSquare, ChevronDown, AlertCircle, FileText,
+  MessageSquare, ChevronDown, AlertCircle, FileText, X,
 } from "lucide-react";
 
 // ── Types ──
@@ -13,6 +13,69 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   docs?: string[];
+  phase?: string;
+}
+
+// ── Map citation source names to actual PDF filenames ──
+const SOURCE_TO_FILE: Record<string, string> = {
+  "hud handbook 4000.1": "40001 FHA SFH Handbook.pdf",
+  "fha handbook 4000.1": "40001 FHA SFH Handbook.pdf",
+  "fha handbook": "40001 FHA SFH Handbook.pdf",
+  "4000.1": "40001 FHA SFH Handbook.pdf",
+  "fha chapter 1": "Chapter_1_Lender_Approval_Guidelines.pdf",
+  "fha chapter 10": "Ch10_Appraisal_Process_NEW.pdf",
+  "fha chapter 11": "Ch11_Appraisal_Report.pdf",
+  "fha chapter 12": "Ch12_Minimum_Property_Requirement_NEW.pdf",
+  "fha chapter 13": "Chapter_13.pdf",
+  "fha chapter 14": "Chapter_14.pdf",
+  "fha chapter 15": "Chapter_15.pdf",
+  "fha chapter 16": "Chapter_16.pdf",
+  "fha chapter 17": "Chapter_17.pdf",
+  "fha chapter 18": "Chapter_18.pdf",
+  "va pamphlet 26-7": "VA Handbook all chapters 12.2.24 (2).pdf",
+  "va handbook": "VA Handbook all chapters 12.2.24 (2).pdf",
+  "va chapter 2": "chapter2-veterans-eligibility-and-entitlement.pdf",
+  "va chapter 3": "chapter3-the-va-loan-and-guaranty.pdf",
+  "va chapter 4": "chapter_4_credit_underwriting.pdf",
+  "va chapter 5": "vap26-7-chapter5-how-to-process-va-loans-and-submit-them-to-va.pdf",
+  "va chapter 6": "chapter6-refinancing-loans.pdf",
+  "va chapter 7": "vchapter7-loans-requiring-special-underwriting-guaranty-and-other-considerations.pdf",
+  "va chapter 8": "chapter8-borrower-fees-and-charges-and-the-va-funding-fee.pdf",
+  "va chapter 9": "ch9-legal-instruments-liens-escrows-and-related-issues.pdf",
+  "fannie mae selling guide": "Selling-Guide_12-11-24 Highighted.pdf",
+  "fannie mae": "Selling-Guide_12-11-24 Highighted.pdf",
+  "freddie mac": "Freddie Mac Selling Guide 10.2.24.pdf",
+  "freddie mac seller/servicer guide": "Freddie Mac Selling Guide 10.2.24.pdf",
+  "freddie mac selling guide": "Freddie Mac Selling Guide 10.2.24.pdf",
+  "usda hb-1-3555": "USDA hb-1-3555_0 12.2.24.pdf",
+  "usda handbook": "USDA hb-1-3555_0 12.2.24.pdf",
+  "usda": "USDA hb-1-3555_0 12.2.24.pdf",
+};
+
+function resolveSourceFile(citation: string): string | null {
+  const lower = citation.toLowerCase();
+  // Try exact matches first, then partial matches
+  for (const [key, file] of Object.entries(SOURCE_TO_FILE)) {
+    if (lower.includes(key)) return file;
+  }
+  // Try matching chapter numbers for FHA/VA
+  const fhaChapterMatch = lower.match(/(?:fha|hud).*?chapter\s*(\d+)/);
+  if (fhaChapterMatch) {
+    const key = `fha chapter ${fhaChapterMatch[1]}`;
+    if (SOURCE_TO_FILE[key]) return SOURCE_TO_FILE[key];
+  }
+  const vaChapterMatch = lower.match(/va.*?chapter\s*(\d+)/);
+  if (vaChapterMatch) {
+    const key = `va chapter ${vaChapterMatch[1]}`;
+    if (SOURCE_TO_FILE[key]) return SOURCE_TO_FILE[key];
+  }
+  // Generic fallbacks
+  if (lower.includes("fha") || lower.includes("hud")) return SOURCE_TO_FILE["fha handbook 4000.1"];
+  if (lower.includes("va")) return SOURCE_TO_FILE["va handbook"];
+  if (lower.includes("fannie")) return SOURCE_TO_FILE["fannie mae"];
+  if (lower.includes("freddie")) return SOURCE_TO_FILE["freddie mac"];
+  if (lower.includes("usda") || lower.includes("rural")) return SOURCE_TO_FILE["usda"];
+  return null;
 }
 
 // ── Suggested starter questions ──
@@ -27,8 +90,8 @@ const STARTERS = [
   { label: "Condo approval", q: "What are the condo project approval requirements for FHA vs conventional loans?" },
 ];
 
-// ── Simple markdown renderer ──
-function renderMarkdown(text: string) {
+// ── Markdown renderer with citation support ──
+function renderMarkdown(text: string, onCitationClick: (file: string, citation: string) => void) {
   const lines = text.split("\n");
   const elements: React.ReactNode[] = [];
   let tableRows: string[][] = [];
@@ -87,19 +150,48 @@ function renderMarkdown(text: string) {
   };
 
   const inlineFormat = (text: string): React.ReactNode => {
-    // Bold
-    const parts = text.split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((part, i) => {
-      if (part.startsWith("**") && part.endsWith("**")) {
-        return <strong key={i} className="font-semibold text-[var(--text-primary)]">{part.slice(2, -2)}</strong>;
-      }
-      // Inline code
-      const codeParts = part.split(/(`[^`]+`)/g);
-      return codeParts.map((cp, j) => {
-        if (cp.startsWith("`") && cp.endsWith("`")) {
-          return <code key={`${i}-${j}`} className="bg-orange-50 text-orange-700 px-1 py-0.5 rounded text-xs font-mono">{cp.slice(1, -1)}</code>;
+    // Split on citation brackets 【...】
+    const citationParts = text.split(/(【[^】]+】)/g);
+    return citationParts.map((segment, si) => {
+      // Citation badge
+      if (segment.startsWith("【") && segment.endsWith("】")) {
+        const citation = segment.slice(1, -1);
+        const file = resolveSourceFile(citation);
+        if (file) {
+          return (
+            <button
+              key={`cite-${si}`}
+              onClick={(e) => { e.stopPropagation(); onCitationClick(file, citation); }}
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 bg-orange-100 text-orange-700 rounded text-[10px] font-medium hover:bg-orange-200 transition-colors cursor-pointer border border-orange-200"
+              title={`View source: ${citation}`}
+            >
+              <BookOpen className="w-2.5 h-2.5" />
+              {citation.length > 50 ? citation.slice(0, 47) + "..." : citation}
+            </button>
+          );
         }
-        return cp;
+        // Non-resolvable citation - render as static badge
+        return (
+          <span key={`cite-${si}`} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 bg-gray-100 text-gray-600 rounded text-[10px] font-medium border border-gray-200">
+            <FileText className="w-2.5 h-2.5" />
+            {citation.length > 50 ? citation.slice(0, 47) + "..." : citation}
+          </span>
+        );
+      }
+
+      // Bold + code processing for non-citation text
+      const parts = segment.split(/(\*\*[^*]+\*\*)/g);
+      return parts.map((part, i) => {
+        if (part.startsWith("**") && part.endsWith("**")) {
+          return <strong key={`${si}-${i}`} className="font-semibold text-[var(--text-primary)]">{part.slice(2, -2)}</strong>;
+        }
+        const codeParts = part.split(/(`[^`]+`)/g);
+        return codeParts.map((cp, j) => {
+          if (cp.startsWith("`") && cp.endsWith("`")) {
+            return <code key={`${si}-${i}-${j}`} className="bg-orange-50 text-orange-700 px-1 py-0.5 rounded text-xs font-mono">{cp.slice(1, -1)}</code>;
+          }
+          return cp;
+        });
       });
     });
   };
@@ -111,7 +203,6 @@ function renderMarkdown(text: string) {
     if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
       flushList();
       const cells = trimmed.split("|").slice(1, -1).map(c => c.trim());
-      // Check if separator row
       if (cells.every(c => /^[-:]+$/.test(c))) {
         inTable = true;
         continue;
@@ -125,7 +216,6 @@ function renderMarkdown(text: string) {
       continue;
     }
 
-    // End of table
     if (inTable) flushTable();
 
     // Bullet list
@@ -141,13 +231,11 @@ function renderMarkdown(text: string) {
     }
     if (inList) flushList();
 
-    // Empty line
     if (trimmed === "") {
       elements.push(<div key={key++} className="h-2" />);
       continue;
     }
 
-    // Headers
     if (trimmed.startsWith("### ")) {
       elements.push(<h4 key={key++} className="text-sm font-bold mt-4 mb-1 text-[var(--text-primary)]">{inlineFormat(trimmed.slice(4))}</h4>);
       continue;
@@ -161,17 +249,14 @@ function renderMarkdown(text: string) {
       continue;
     }
 
-    // Horizontal rule
     if (/^---+$/.test(trimmed)) {
       elements.push(<hr key={key++} className="my-3 border-gray-200" />);
       continue;
     }
 
-    // Regular paragraph
     elements.push(<p key={key++} className="text-sm leading-relaxed my-1">{inlineFormat(trimmed)}</p>);
   }
 
-  // Flush remaining
   if (inList) flushList();
   if (inTable) flushTable();
 
@@ -185,9 +270,13 @@ export default function MiloPage() {
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
+  const [phase, setPhase] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // PDF side panel state
+  const [pdfPanel, setPdfPanel] = useState<{ file: string; citation: string } | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -197,19 +286,23 @@ export default function MiloPage() {
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
+  const openPdfPanel = useCallback((file: string, citation: string) => {
+    setPdfPanel({ file, citation });
+  }, []);
+
   const sendMessage = async (text?: string) => {
     const content = (text || input).trim();
     if (!content || loading) return;
 
     setInput("");
     setError("");
+    setPhase("");
     const userMsg: Message = { role: "user", content };
     const updatedMessages = [...messages, userMsg];
     setMessages(updatedMessages);
     setLoading(true);
     setStreaming(true);
 
-    // Add placeholder assistant message
     const assistantMsg: Message = { role: "assistant", content: "", docs: [] };
     setMessages([...updatedMessages, assistantMsg]);
 
@@ -251,6 +344,15 @@ export default function MiloPage() {
           }
         }
 
+        // Parse phase indicator
+        if (accumulated.includes("<!--PHASE:") && accumulated.includes("-->")) {
+          const phaseMatch = accumulated.match(/<!--PHASE:(.*?)-->/);
+          if (phaseMatch) {
+            setPhase(phaseMatch[1]);
+            accumulated = accumulated.replace(/<!--PHASE:.*?-->/, "");
+          }
+        }
+
         setMessages(prev => {
           const copy = [...prev];
           copy[copy.length - 1] = { role: "assistant", content: accumulated, docs };
@@ -260,11 +362,11 @@ export default function MiloPage() {
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       setError((err as Error).message || "Failed to get response");
-      // Remove empty assistant message
       setMessages(prev => prev.filter(m => !(m.role === "assistant" && m.content === "")));
     } finally {
       setLoading(false);
       setStreaming(false);
+      setPhase("");
       abortRef.current = null;
       setTimeout(() => inputRef.current?.focus(), 100);
     }
@@ -275,6 +377,7 @@ export default function MiloPage() {
     setMessages([]);
     setInput("");
     setError("");
+    setPhase("");
     setLoading(false);
     setStreaming(false);
   };
@@ -323,8 +426,8 @@ export default function MiloPage() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col max-w-[900px] mx-auto w-full">
+      {/* Main Content - adjusts width when PDF panel is open */}
+      <div className={`flex-1 flex flex-col mx-auto w-full transition-all duration-300 ${pdfPanel ? "max-w-[50%]" : "max-w-[900px]"}`}>
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
           {!hasMessages ? (
@@ -347,7 +450,7 @@ export default function MiloPage() {
                   <BookOpen className="w-3 h-3" /> 25 Guideline Documents
                 </span>
                 <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 rounded-full text-xs font-medium">
-                  <FileText className="w-3 h-3" /> Real-time Citations
+                  <FileText className="w-3 h-3" /> Clickable Citations
                 </span>
                 <span className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 text-purple-700 rounded-full text-xs font-medium">
                   <MessageSquare className="w-3 h-3" /> Scenario Analysis
@@ -394,11 +497,13 @@ export default function MiloPage() {
                       {msg.role === "user" ? (
                         <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                       ) : msg.content ? (
-                        <div className="prose-sm">{renderMarkdown(msg.content)}</div>
+                        <div className="prose-sm">{renderMarkdown(msg.content, openPdfPanel)}</div>
                       ) : (
                         <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] py-1">
                           <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--accent)]" />
-                          Milo is analyzing guidelines...
+                          {phase === "synthesizing"
+                            ? "Milo is synthesizing from multiple documents..."
+                            : "Milo is analyzing guidelines..."}
                         </div>
                       )}
                     </div>
@@ -478,6 +583,37 @@ export default function MiloPage() {
           </div>
         </div>
       </div>
+
+      {/* ── PDF Side Panel ── */}
+      {pdfPanel && (
+        <div className="fixed top-0 right-0 h-full w-1/2 z-[100] flex flex-col bg-white border-l border-gray-200 shadow-2xl animate-in slide-in-from-right duration-300">
+          {/* Panel Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
+            <div className="flex items-center gap-2 min-w-0">
+              <FileText className="w-4 h-4 text-[var(--accent)] shrink-0" />
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-[var(--text)] truncate">{pdfPanel.file}</h3>
+                <p className="text-[10px] text-[var(--text-muted)] truncate">{pdfPanel.citation}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setPdfPanel(null)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-200 transition-colors"
+            >
+              <X className="w-4 h-4 text-gray-500" />
+            </button>
+          </div>
+
+          {/* PDF iframe */}
+          <div className="flex-1">
+            <iframe
+              src={`/api/milo/docs?file=${encodeURIComponent(pdfPanel.file)}`}
+              className="w-full h-full border-0"
+              title={`PDF: ${pdfPanel.file}`}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { routeDocs, loadDocBase64 } from "@/lib/milo-docs";
+import { routeDocsMultiBatch, loadDocBase64 } from "@/lib/milo-docs";
+import type { DocMeta } from "@/lib/milo-docs";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
@@ -13,13 +14,16 @@ Help loan officers, processors, and underwriters at Premier Lending navigate any
 ## Core Principles
 
 ### 1. ALWAYS Ground in Guidelines
-Every substantive answer MUST reference specific guideline sections. Use exact citations:
-- FHA: "HUD Handbook 4000.1, Section II.A.4.d.ii(A)"
-- VA: "VA Pamphlet 26-7, Chapter 4, Section 4.06"
-- Fannie Mae: "Fannie Mae Selling Guide, Section B3-3.1-02"
-- Freddie Mac: "Freddie Mac Seller/Servicer Guide, Section 5501.1"
-- USDA: "USDA HB-1-3555, Chapter 10"
-If you reference a provided document, clearly indicate which document contains the information.
+Every substantive answer MUST reference specific guideline sections. Use exact citations in this format:
+- FHA: "【HUD Handbook 4000.1, Section II.A.4.d.ii(A)】"
+- VA: "【VA Pamphlet 26-7, Chapter 4, Section 4.06】"
+- Fannie Mae: "【Fannie Mae Selling Guide, Section B3-3.1-02】"
+- Freddie Mac: "【Freddie Mac Seller/Servicer Guide, Section 5501.1】"
+- USDA: "【USDA HB-1-3555, Chapter 10】"
+
+IMPORTANT: Always wrap source references in 【 and 】 brackets. This enables the system to create clickable links to the source documents. Format: 【Source Name, Section X.X, p.XX】
+
+If you reference a provided document, include the page number when visible: 【FHA Handbook 4000.1, Section II.A.4, p.15】
 
 ### 2. Ask Smart Clarifying Questions
 If the user's scenario is ambiguous, ask TARGETED questions before giving a definitive answer. Don't guess - ask. Examples:
@@ -61,7 +65,7 @@ For substantive answers, use this structure:
 
 **Recommended Next Steps** - What to do next
 
-**Sources** - Guideline sections referenced
+**Sources** - Guideline sections referenced (use 【brackets】 format)
 
 ## Deep Loan Program Knowledge
 
@@ -134,11 +138,87 @@ For substantive answers, use this structure:
 - When referencing provided documents, say "Per the [Document Name] provided..."
 - If a question is outside the scope of provided documents, state that clearly and provide your best knowledge with caveats
 - Always consider overlays - remind users that Premier Lending may have additional requirements beyond agency minimums
-- For calculations (DTI, LTV, MIP, etc.), show your work step by step`;
+- For calculations (DTI, LTV, MIP, etc.), show your work step by step
+- ALWAYS use 【bracket notation】 for citations to enable clickable source links`;
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+/** Build API messages with PDF document blocks attached to first user message */
+function buildApiMessages(messages: ChatMessage[], docs: DocMeta[]) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const apiMessages: any[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    if (msg.role === "user" && i === 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const contentBlocks: any[] = [];
+
+      for (const doc of docs) {
+        const b64 = loadDocBase64(doc.filename);
+        if (b64) {
+          contentBlocks.push({
+            type: "document",
+            source: { type: "base64", media_type: "application/pdf", data: b64 },
+            cache_control: { type: "ephemeral" },
+          });
+        }
+      }
+
+      contentBlocks.push({ type: "text", text: msg.content });
+      apiMessages.push({ role: "user", content: contentBlocks });
+    } else {
+      apiMessages.push({ role: msg.role, content: msg.content });
+    }
+  }
+
+  return apiMessages;
+}
+
+/** Make a non-streaming extraction call (for multi-batch overflow) */
+async function extractFromBatch(docs: DocMeta[], question: string): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const contentBlocks: any[] = [];
+  for (const doc of docs) {
+    const b64 = loadDocBase64(doc.filename);
+    if (b64) {
+      contentBlocks.push({
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: b64 },
+        cache_control: { type: "ephemeral" },
+      });
+    }
+  }
+  contentBlocks.push({
+    type: "text",
+    text: `Extract ONLY the guidelines, rules, and requirements relevant to this question: "${question}"\n\nInclude section numbers, page references, and specific requirements. Be thorough but only include directly relevant content. Format with clear section headers.`,
+  });
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_API_KEY!,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 4096,
+      messages: [{ role: "user", content: contentBlocks }],
+    }),
+  });
+
+  if (!res.ok) {
+    console.error("Extraction batch error:", res.status);
+    return "";
+  }
+
+  const data = await res.json();
+  return data.content?.[0]?.text || "";
 }
 
 export async function POST(req: NextRequest) {
@@ -166,44 +246,50 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ── Route to relevant documents ──
+  // ── Route to relevant documents (with multi-batch support) ──
   const lastUserMsg = [...messages].reverse().find(m => m.role === "user")?.content || "";
   const conversationCtx = messages.map(m => m.content).join(" ");
-  const docs = routeDocs(lastUserMsg, conversationCtx);
+  const { directBatch, overflowBatches } = await routeDocsMultiBatch(lastUserMsg, conversationCtx);
 
-  // ── Build API messages with document blocks ──
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const apiMessages: any[] = [];
+  const allDocNames = [
+    ...directBatch.map(d => d.topic),
+    ...overflowBatches.flat().map(d => d.topic),
+  ];
 
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
+  // ── Multi-batch: extract from overflow batches in parallel ──
+  let extractedContext = "";
+  if (overflowBatches.length > 0) {
+    const extractions = await Promise.all(
+      overflowBatches.map(batch => extractFromBatch(batch, lastUserMsg))
+    );
+    const validExtractions = extractions.filter(Boolean);
+    if (validExtractions.length > 0) {
+      extractedContext = "\n\n## Additional Guideline Extractions\n\nThe following guidelines were extracted from additional source documents:\n\n" +
+        validExtractions.join("\n\n---\n\n");
+    }
+  }
 
-    if (msg.role === "user" && i === 0) {
-      // Attach PDF documents to the first user message for context
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const contentBlocks: any[] = [];
+  // ── Build API messages ──
+  const apiMessages = buildApiMessages(messages, directBatch);
 
-      for (const doc of docs) {
-        const b64 = loadDocBase64(doc.filename);
-        if (b64) {
-          contentBlocks.push({
-            type: "document",
-            source: { type: "base64", media_type: "application/pdf", data: b64 },
-            cache_control: { type: "ephemeral" },
-          });
+  // If we have extracted context from overflow batches, prepend it to the last user message
+  if (extractedContext) {
+    const lastIdx = apiMessages.length - 1;
+    if (apiMessages[lastIdx].role === "user") {
+      if (typeof apiMessages[lastIdx].content === "string") {
+        apiMessages[lastIdx].content = extractedContext + "\n\n---\n\nUser Question: " + apiMessages[lastIdx].content;
+      } else if (Array.isArray(apiMessages[lastIdx].content)) {
+        // Find the text block and prepend
+        const blocks = apiMessages[lastIdx].content;
+        const textIdx = blocks.findIndex((b: { type: string }) => b.type === "text");
+        if (textIdx >= 0) {
+          blocks[textIdx].text = extractedContext + "\n\n---\n\nUser Question: " + blocks[textIdx].text;
         }
       }
-
-      contentBlocks.push({ type: "text", text: msg.content });
-      apiMessages.push({ role: "user", content: contentBlocks });
-    } else {
-      apiMessages.push({ role: msg.role, content: msg.content });
     }
   }
 
   // ── Stream from Claude ──
-  const docNames = docs.map(d => d.topic);
-
   let claudeRes: Response;
   try {
     claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -242,7 +328,12 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       // Send metadata prefix so client knows which docs are consulted
-      controller.enqueue(encoder.encode(`<!--DOCS:${JSON.stringify(docNames)}-->`));
+      controller.enqueue(encoder.encode(`<!--DOCS:${JSON.stringify(allDocNames)}-->`));
+
+      // Send phase indicator if multi-batch was used
+      if (overflowBatches.length > 0) {
+        controller.enqueue(encoder.encode(`<!--PHASE:synthesizing-->`));
+      }
 
       const reader = claudeRes.body!.getReader();
       const decoder = new TextDecoder();
@@ -283,7 +374,7 @@ export async function POST(req: NextRequest) {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-cache",
-      "X-Milo-Docs": JSON.stringify(docNames),
+      "X-Milo-Docs": JSON.stringify(allDocNames),
     },
   });
 }

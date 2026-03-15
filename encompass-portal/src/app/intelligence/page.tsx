@@ -13,6 +13,14 @@ import {
   MessageSquare, Send, Trash2, Download, Table2,
 } from "lucide-react";
 import USMap from "@/components/USMap";
+import {
+  getIntelCache,
+  setIntelCache,
+  isIntelFresh,
+  getConnectedStatus,
+  setConnectedStatus,
+  compactToPipelineRow,
+} from "@/lib/pipeline-store";
 
 interface PipelineRow {
   loanGuid: string;
@@ -52,32 +60,6 @@ interface CompactResponse {
   };
 }
 
-/** Map compact row to PipelineRow so existing useMemo aggregations work unchanged */
-function compactToPipelineRow(c: CompactRow): PipelineRow {
-  return {
-    loanGuid: c.guid,
-    fields: {
-      "Loan.LoanNumber": c.ln,
-      "Loan.LoanAmount": String(c.amt),
-      "Loan.LoanProgram": c.prog,
-      "Loan.LoanPurpose": c.purp,
-      "Loan.CurrentMilestoneName": c.ms,
-      "Loan.LoanOfficerName": c.lo,
-      "Loan.LockStatus": c.lock,
-      "Loan.NoteRatePercent": String(c.rate),
-      "Loan.SubjectPropertyState": c.st,
-      "Fields.14": c.st,
-      "Loan.DateCreated": c.dt,
-      "Loan.LienPosition": c.lien,
-      "Loan.Channel": c.channel,
-      "Loan.ClosingDate": c.closingDate,
-      "Fields.748": c.closingDate,
-      "Loan.LockExpirationDate": c.lockExp,
-      "Loan.LastModified": c.modified,
-    },
-  };
-}
-
 const COLORS = [
   "#EA580C", "#2563EB", "#16A34A", "#D97706", "#7C3AED", "#DC2626",
   "#0891B2", "#4F46E5", "#059669", "#E11D48", "#8B5CF6", "#F59E0B",
@@ -110,18 +92,16 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
 
 type Section = "snapshot" | "geography" | "characteristics" | "distribution" | "timeline" | "officers" | "performance" | "crosstab";
 
-// Module-level cache: survives component unmount/remount during client-side navigation
-let _cachedIntelRows: PipelineRow[] | null = null;
-let _cachedIntelMeta: { cacheAge: number; total: number } | null = null;
+const _initIntel = getIntelCache();
 
 export default function IntelligencePage() {
-  const [rows, setRows] = useState<PipelineRow[]>(_cachedIntelRows || []);
-  const [loading, setLoading] = useState(!_cachedIntelRows);
+  const [rows, setRows] = useState<PipelineRow[]>(_initIntel.rows || []);
+  const [loading, setLoading] = useState(!_initIntel.rows);
   const [error, setError] = useState("");
   const [expandedSection, setExpandedSection] = useState<Section | null>("snapshot");
-  const [connected, setConnected] = useState<boolean | null>(null);
-  const [cacheAge, setCacheAge] = useState(_cachedIntelMeta?.cacheAge || 0);
-  const [totalInCache, setTotalInCache] = useState(_cachedIntelMeta?.total || 0);
+  const [connected, setConnected] = useState<boolean | null>(getConnectedStatus());
+  const [cacheAge, setCacheAge] = useState(_initIntel.meta?.cacheAge || 0);
+  const [totalInCache, setTotalInCache] = useState(_initIntel.meta?.total || 0);
   const [warmingProgress, setWarmingProgress] = useState(0);
 
   // Filters
@@ -162,9 +142,12 @@ export default function IntelligencePage() {
   const [aiChatLoading, setAiChatLoading] = useState(false);
   const [aiShowDataIdx, setAiShowDataIdx] = useState<number | null>(null);
 
-  const fetchAll = useCallback(async () => {
+  const fetchAll = useCallback(async (force = false) => {
+    // Skip fetch if shared cache is fresh
+    if (!force && isIntelFresh()) return;
+
     // Only show loading spinner if we don't have cached data
-    if (!_cachedIntelRows) setLoading(true);
+    if (!getIntelCache().rows) setLoading(true);
     setError("");
     try {
       const res = await fetch("/api/pipeline?all=true&compact=true");
@@ -172,21 +155,16 @@ export default function IntelligencePage() {
       const data: CompactResponse | PipelineRow[] = await res.json();
 
       if ("rows" in data && Array.isArray((data as CompactResponse).rows) && (data as CompactResponse).rows.length > 0 && "amt" in (data as CompactResponse).rows[0]) {
-        // Compact response from cache
         const compact = data as CompactResponse;
         const mapped = compact.rows.map(compactToPipelineRow);
         setRows(mapped);
         setCacheAge(compact.cacheAge || 0);
         setTotalInCache(compact.total || compact.rows.length);
-        // Save to module-level cache for instant restore on navigation
-        _cachedIntelRows = mapped;
-        _cachedIntelMeta = { cacheAge: compact.cacheAge || 0, total: compact.total || compact.rows.length };
+        setIntelCache(mapped, { cacheAge: compact.cacheAge || 0, total: compact.total || compact.rows.length });
       } else if (Array.isArray(data)) {
-        // Legacy array response (fallback during warmup)
         setRows(data);
         setTotalInCache(data.length);
-        _cachedIntelRows = data;
-        _cachedIntelMeta = { cacheAge: 0, total: data.length };
+        setIntelCache(data, { cacheAge: 0, total: data.length });
       } else {
         setRows([]);
       }
@@ -200,10 +178,11 @@ export default function IntelligencePage() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   useEffect(() => {
+    if (getConnectedStatus() !== null) { setConnected(getConnectedStatus()); return; }
     fetch("/api/auth/test")
       .then((r) => r.json())
-      .then((d) => setConnected(d.success))
-      .catch(() => setConnected(false));
+      .then((d) => { setConnected(d.success); setConnectedStatus(d.success); })
+      .catch(() => { setConnected(false); setConnectedStatus(false); });
   }, []);
 
   // ─── Filter options (from raw data) ───
@@ -671,7 +650,7 @@ export default function IntelligencePage() {
         setWarmingProgress(status.loadedSoFar || 0);
         if (status.state === "ready") {
           clearInterval(interval);
-          fetchAll();
+          fetchAll(true);
         }
       } catch { /* ignore */ }
     }, 5000);

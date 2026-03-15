@@ -10,6 +10,13 @@ import {
   Loader2, TrendingUp, TrendingDown, Newspaper, RefreshCw, ExternalLink,
   BarChart3, Globe, Clock, ArrowUpRight, ArrowDownRight, Minus, MessageSquare,
 } from "lucide-react";
+import {
+  getMarketCache,
+  setMarketCache,
+  isMarketFresh,
+  getConnectedStatus,
+  setConnectedStatus,
+} from "@/lib/pipeline-store";
 
 // ─── Types ───
 interface NewsItem {
@@ -98,28 +105,34 @@ const RateTooltip = ({ active, payload, label }: { active?: boolean; payload?: A
   );
 };
 
+const _initMarket = getMarketCache();
+
 export default function MarketPage() {
-  const [news, setNews] = useState<NewsItem[]>([]);
-  const [newsLoading, setNewsLoading] = useState(true);
+  const cached = _initMarket.data;
+  const [news, setNews] = useState<NewsItem[]>((cached?.news as NewsItem[]) || []);
+  const [newsLoading, setNewsLoading] = useState(!cached);
   const [newsError, setNewsError] = useState("");
   const [newsCategory, setNewsCategory] = useState("");
-  const [newsFetchedAt, setNewsFetchedAt] = useState("");
+  const [newsFetchedAt, setNewsFetchedAt] = useState(cached?.newsFetchedAt || "");
 
-  const [mortgageRates, setMortgageRates] = useState<RatePoint[]>([]);
-  const [treasuryRates, setTreasuryRates] = useState<TreasuryPoint[]>([]);
-  const [ratesLoading, setRatesLoading] = useState(true);
-  const [ratesFetchedAt, setRatesFetchedAt] = useState("");
+  const [mortgageRates, setMortgageRates] = useState<RatePoint[]>((cached?.rates as { mortgage?: RatePoint[] })?.mortgage || []);
+  const [treasuryRates, setTreasuryRates] = useState<TreasuryPoint[]>((cached?.rates as { treasury?: TreasuryPoint[] })?.treasury || []);
+  const [ratesLoading, setRatesLoading] = useState(!cached);
+  const [ratesFetchedAt, setRatesFetchedAt] = useState(cached?.ratesFetchedAt || "");
 
-  const [connected, setConnected] = useState<boolean | null>(null);
+  const [connected, setConnected] = useState<boolean | null>(getConnectedStatus());
 
   useEffect(() => {
+    if (getConnectedStatus() !== null) { setConnected(getConnectedStatus()); return; }
     fetch("/api/auth/test")
       .then((r) => r.json())
-      .then((d) => setConnected(d.success))
-      .catch(() => setConnected(false));
+      .then((d) => { setConnected(d.success); setConnectedStatus(d.success); })
+      .catch(() => { setConnected(false); setConnectedStatus(false); });
   }, []);
 
-  const fetchNews = useCallback(async (cat?: string) => {
+  const fetchNews = useCallback(async (cat?: string, force = false) => {
+    // Skip if cache is fresh and no category filter change
+    if (!force && !cat && isMarketFresh()) return;
     setNewsLoading(true);
     setNewsError("");
     try {
@@ -129,6 +142,14 @@ export default function MarketPage() {
       const data = await res.json();
       setNews(data.items || []);
       setNewsFetchedAt(data.fetchedAt || "");
+      // Save to shared store
+      const currentRates = getMarketCache().data;
+      setMarketCache({
+        news: data.items || [],
+        rates: currentRates?.rates || {},
+        newsFetchedAt: data.fetchedAt || "",
+        ratesFetchedAt: currentRates?.ratesFetchedAt || "",
+      });
     } catch (err: unknown) {
       setNewsError(err instanceof Error ? err.message : "Failed to load news");
     } finally {
@@ -136,7 +157,8 @@ export default function MarketPage() {
     }
   }, []);
 
-  const fetchRates = useCallback(async () => {
+  const fetchRates = useCallback(async (force = false) => {
+    if (!force && isMarketFresh()) return;
     setRatesLoading(true);
     try {
       const res = await fetch("/api/market/rates");
@@ -145,6 +167,14 @@ export default function MarketPage() {
       setMortgageRates(data.mortgage || []);
       setTreasuryRates(data.treasury || []);
       setRatesFetchedAt(data.fetchedAt || "");
+      // Save to shared store
+      const currentMarket = getMarketCache().data;
+      setMarketCache({
+        news: currentMarket?.news || [],
+        rates: { mortgage: data.mortgage, treasury: data.treasury },
+        newsFetchedAt: currentMarket?.newsFetchedAt || "",
+        ratesFetchedAt: data.fetchedAt || "",
+      });
     } catch {
       // Rates may fail, that's ok
     } finally {

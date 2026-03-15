@@ -22,6 +22,13 @@ import {
   Clock,
   MessageSquare,
 } from "lucide-react";
+import {
+  getPipelineCache,
+  setPipelineCache,
+  isPipelineFresh,
+  getConnectedStatus,
+  setConnectedStatus,
+} from "@/lib/pipeline-store";
 
 interface PipelineRow {
   loanGuid: string;
@@ -122,28 +129,25 @@ const formatCacheAge = (ms: number) => {
   return `${min} min ago`;
 };
 
-// Module-level cache: survives component unmount/remount during client-side navigation
-let _cachedResponse: PipelineResponse | null = null;
-let _cachedParams = "";
-let _cachedConnected: boolean | null = null;
+const _initCache = getPipelineCache();
 
 export default function PipelinePage() {
   const router = useRouter();
-  const [rows, setRows] = useState<PipelineRow[]>(_cachedResponse?.rows || []);
-  const [total, setTotal] = useState(_cachedResponse?.total || 0);
-  const [totalVolume, setTotalVolume] = useState(_cachedResponse?.totalVolume || 0);
-  const [cacheAge, setCacheAge] = useState(_cachedResponse?.cacheAge || 0);
+  const [rows, setRows] = useState<PipelineRow[]>(_initCache.data?.rows || []);
+  const [total, setTotal] = useState(_initCache.data?.total || 0);
+  const [totalVolume, setTotalVolume] = useState(_initCache.data?.totalVolume || 0);
+  const [cacheAge, setCacheAge] = useState(_initCache.data?.cacheAge || 0);
   const [filterOptions, setFilterOptions] = useState<FilterOptions>(
-    _cachedResponse?.filterOptions || { milestones: [], los: [], states: [], purposes: [], locks: [], programs: [] },
+    _initCache.data?.filterOptions || { milestones: [], los: [], states: [], purposes: [], locks: [], programs: [] },
   );
-  const [loading, setLoading] = useState(!_cachedResponse);
+  const [loading, setLoading] = useState(!_initCache.data);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const [connected, setConnected] = useState<boolean | null>(_cachedConnected);
-  const [isWarming, setIsWarming] = useState(_cachedResponse?._warming || false);
-  const [loadedSoFar, setLoadedSoFar] = useState(_cachedResponse?._loadedSoFar || 0);
+  const [connected, setConnected] = useState<boolean | null>(getConnectedStatus());
+  const [isWarming, setIsWarming] = useState(_initCache.data?._warming || false);
+  const [loadedSoFar, setLoadedSoFar] = useState(_initCache.data?._loadedSoFar || 0);
   const pageSize = 50;
 
   // AI search
@@ -171,30 +175,33 @@ export default function PipelinePage() {
   const [sortKey, setSortKey] = useState<SortKey>("modified");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  const fetchPipeline = useCallback(async () => {
+  const fetchPipeline = useCallback(async (force = false) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+      sortField: sortKey,
+      sortDir: sortDir,
+    });
+    if (search) params.set("search", search);
+    if (milestoneFilter) params.set("milestone", milestoneFilter);
+    if (loFilter) params.set("lo", loFilter);
+    if (stateFilter) params.set("state", stateFilter);
+    if (purposeFilter) params.set("purpose", purposeFilter);
+    if (lockFilter) params.set("lock", lockFilter);
+    if (programFilter) params.set("program", programFilter);
+    if (amountMin) params.set("amountMin", amountMin);
+    if (amountMax) params.set("amountMax", amountMax);
+    if (rateMin) params.set("rateMin", rateMin);
+    if (rateMax) params.set("rateMax", rateMax);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
+
+    // Skip fetch if shared cache is fresh and params match
+    if (!force && isPipelineFresh(params.toString())) return;
+
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-        sortField: sortKey,
-        sortDir: sortDir,
-      });
-      if (search) params.set("search", search);
-      if (milestoneFilter) params.set("milestone", milestoneFilter);
-      if (loFilter) params.set("lo", loFilter);
-      if (stateFilter) params.set("state", stateFilter);
-      if (purposeFilter) params.set("purpose", purposeFilter);
-      if (lockFilter) params.set("lock", lockFilter);
-      if (programFilter) params.set("program", programFilter);
-      if (amountMin) params.set("amountMin", amountMin);
-      if (amountMax) params.set("amountMax", amountMax);
-      if (rateMin) params.set("rateMin", rateMin);
-      if (rateMax) params.set("rateMax", rateMax);
-      if (dateFrom) params.set("dateFrom", dateFrom);
-      if (dateTo) params.set("dateTo", dateTo);
-
       const res = await fetch(`/api/pipeline?${params}`);
       if (!res.ok) throw new Error(await res.text());
       const data: PipelineResponse = await res.json();
@@ -207,9 +214,8 @@ export default function PipelinePage() {
       setLoadedSoFar(data._loadedSoFar || 0);
       if (data.filterOptions) setFilterOptions(data.filterOptions);
 
-      // Persist in module-level cache for instant restore on navigation
-      _cachedResponse = data;
-      _cachedParams = params.toString();
+      // Persist in shared store for instant restore on navigation
+      setPipelineCache(data, params.toString());
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load pipeline");
     } finally {
@@ -218,11 +224,11 @@ export default function PipelinePage() {
   }, [page, search, sortKey, sortDir, milestoneFilter, loFilter, stateFilter, purposeFilter, lockFilter, programFilter, amountMin, amountMax, rateMin, rateMax, dateFrom, dateTo]);
 
   useEffect(() => {
-    if (_cachedConnected !== null) return; // Already checked
+    if (getConnectedStatus() !== null) return;
     fetch("/api/auth/test")
       .then((r) => r.json())
-      .then((d) => { setConnected(d.success); _cachedConnected = d.success; })
-      .catch(() => { setConnected(false); _cachedConnected = false; });
+      .then((d) => { setConnected(d.success); setConnectedStatus(d.success); })
+      .catch(() => { setConnected(false); setConnectedStatus(false); });
   }, []);
 
   useEffect(() => {
@@ -375,7 +381,7 @@ export default function PipelinePage() {
             </button>
           </form>
           <button
-            onClick={() => { clearAiSearch(); fetchPipeline(); }}
+            onClick={() => { clearAiSearch(); fetchPipeline(true); }}
             disabled={loading}
             className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[var(--border)] rounded-lg text-sm hover:bg-[var(--bg-secondary)] disabled:opacity-50"
           >
