@@ -105,22 +105,19 @@ const RateTooltip = ({ active, payload, label }: { active?: boolean; payload?: A
   );
 };
 
-const _initMarket = getMarketCache();
-
 export default function MarketPage() {
-  const cached = _initMarket.data;
-  const [news, setNews] = useState<NewsItem[]>((cached?.news as NewsItem[]) || []);
-  const [newsLoading, setNewsLoading] = useState(!cached);
+  const [news, setNews] = useState<NewsItem[]>(() => (getMarketCache().data?.news as NewsItem[]) || []);
+  const [newsLoading, setNewsLoading] = useState(() => !getMarketCache().data);
   const [newsError, setNewsError] = useState("");
   const [newsCategory, setNewsCategory] = useState("");
-  const [newsFetchedAt, setNewsFetchedAt] = useState(cached?.newsFetchedAt || "");
+  const [newsFetchedAt, setNewsFetchedAt] = useState(() => getMarketCache().data?.newsFetchedAt || "");
 
-  const [mortgageRates, setMortgageRates] = useState<RatePoint[]>((cached?.rates as { mortgage?: RatePoint[] })?.mortgage || []);
-  const [treasuryRates, setTreasuryRates] = useState<TreasuryPoint[]>((cached?.rates as { treasury?: TreasuryPoint[] })?.treasury || []);
-  const [ratesLoading, setRatesLoading] = useState(!cached);
-  const [ratesFetchedAt, setRatesFetchedAt] = useState(cached?.ratesFetchedAt || "");
+  const [mortgageRates, setMortgageRates] = useState<RatePoint[]>(() => (getMarketCache().data?.rates as { mortgage?: RatePoint[] })?.mortgage || []);
+  const [treasuryRates, setTreasuryRates] = useState<TreasuryPoint[]>(() => (getMarketCache().data?.rates as { treasury?: TreasuryPoint[] })?.treasury || []);
+  const [ratesLoading, setRatesLoading] = useState(() => !getMarketCache().data);
+  const [ratesFetchedAt, setRatesFetchedAt] = useState(() => getMarketCache().data?.ratesFetchedAt || "");
 
-  const [connected, setConnected] = useState<boolean | null>(getConnectedStatus());
+  const [connected, setConnected] = useState<boolean | null>(() => getConnectedStatus());
 
   useEffect(() => {
     if (getConnectedStatus() !== null) { setConnected(getConnectedStatus()); return; }

@@ -92,16 +92,14 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
 
 type Section = "snapshot" | "geography" | "characteristics" | "distribution" | "timeline" | "officers" | "performance" | "crosstab";
 
-const _initIntel = getIntelCache();
-
 export default function IntelligencePage() {
-  const [rows, setRows] = useState<PipelineRow[]>(_initIntel.rows || []);
-  const [loading, setLoading] = useState(!_initIntel.rows);
+  const [rows, setRows] = useState<PipelineRow[]>(() => getIntelCache().rows || []);
+  const [loading, setLoading] = useState(() => !getIntelCache().rows);
   const [error, setError] = useState("");
   const [expandedSection, setExpandedSection] = useState<Section | null>("snapshot");
-  const [connected, setConnected] = useState<boolean | null>(getConnectedStatus());
-  const [cacheAge, setCacheAge] = useState(_initIntel.meta?.cacheAge || 0);
-  const [totalInCache, setTotalInCache] = useState(_initIntel.meta?.total || 0);
+  const [connected, setConnected] = useState<boolean | null>(() => getConnectedStatus());
+  const [cacheAge, setCacheAge] = useState(() => getIntelCache().meta?.cacheAge || 0);
+  const [totalInCache, setTotalInCache] = useState(() => getIntelCache().meta?.total || 0);
   const [warmingProgress, setWarmingProgress] = useState(0);
 
   // Filters

@@ -129,25 +129,24 @@ const formatCacheAge = (ms: number) => {
   return `${min} min ago`;
 };
 
-const _initCache = getPipelineCache();
-
 export default function PipelinePage() {
   const router = useRouter();
-  const [rows, setRows] = useState<PipelineRow[]>(_initCache.data?.rows || []);
-  const [total, setTotal] = useState(_initCache.data?.total || 0);
-  const [totalVolume, setTotalVolume] = useState(_initCache.data?.totalVolume || 0);
-  const [cacheAge, setCacheAge] = useState(_initCache.data?.cacheAge || 0);
+  // Lazy initializers read from shared store at mount time (not module-load time)
+  const [rows, setRows] = useState<PipelineRow[]>(() => getPipelineCache().data?.rows || []);
+  const [total, setTotal] = useState(() => getPipelineCache().data?.total || 0);
+  const [totalVolume, setTotalVolume] = useState(() => getPipelineCache().data?.totalVolume || 0);
+  const [cacheAge, setCacheAge] = useState(() => getPipelineCache().data?.cacheAge || 0);
   const [filterOptions, setFilterOptions] = useState<FilterOptions>(
-    _initCache.data?.filterOptions || { milestones: [], los: [], states: [], purposes: [], locks: [], programs: [] },
+    () => getPipelineCache().data?.filterOptions || { milestones: [], los: [], states: [], purposes: [], locks: [], programs: [] },
   );
-  const [loading, setLoading] = useState(!_initCache.data);
+  const [loading, setLoading] = useState(() => !getPipelineCache().data);
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const [connected, setConnected] = useState<boolean | null>(getConnectedStatus());
-  const [isWarming, setIsWarming] = useState(_initCache.data?._warming || false);
-  const [loadedSoFar, setLoadedSoFar] = useState(_initCache.data?._loadedSoFar || 0);
+  const [connected, setConnected] = useState<boolean | null>(() => getConnectedStatus());
+  const [isWarming, setIsWarming] = useState(() => getPipelineCache().data?._warming || false);
+  const [loadedSoFar, setLoadedSoFar] = useState(() => getPipelineCache().data?._loadedSoFar || 0);
   const pageSize = 50;
 
   // AI search

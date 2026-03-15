@@ -61,7 +61,7 @@ let _marketFetchTime = 0;
 
 let _connectedStatus: boolean | null = null;
 
-const STALE_MS = 60_000; // 60 seconds
+const STALE_MS = 300_000; // 5 minutes - user can always hit Refresh to force
 
 // ── Pipeline page cache ──
 
