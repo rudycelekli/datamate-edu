@@ -2,7 +2,9 @@ import { readFileSync, statSync } from "fs";
 import { join } from "path";
 
 const DOCS_DIR = join(process.cwd(), "docs", "MIlo AI");
-const MAX_DOC_SIZE = 4 * 1024 * 1024; // 4MB per doc
+const MAX_DOC_SIZE = 1.5 * 1024 * 1024; // 1.5MB per doc
+const PAGE_BUDGET = 75; // Claude Sonnet allows 100 pages/request; keep margin
+const BYTES_PER_PAGE = 12_000; // conservative estimate for PDF page size
 
 export interface DocMeta {
   filename: string;
@@ -12,7 +14,7 @@ export interface DocMeta {
 }
 
 export const DOC_CATALOG: DocMeta[] = [
-  // ── FHA Chapters ──
+  // ── FHA Chapters (small, focused) ──
   { filename: "Chapter_1_Lender_Approval_Guidelines.pdf", category: "fha", topic: "FHA Lender Approval Guidelines", keywords: ["lender approval", "mortgagee", "fha approval"] },
   { filename: "Ch10_Appraisal_Process_NEW.pdf", category: "fha", topic: "FHA Appraisal Process", keywords: ["appraisal", "appraiser", "property value", "fha appraisal"] },
   { filename: "Ch11_Appraisal_Report.pdf", category: "fha", topic: "FHA Appraisal Report", keywords: ["appraisal report", "1004", "urar"] },
@@ -24,7 +26,7 @@ export const DOC_CATALOG: DocMeta[] = [
   { filename: "Chapter_17.pdf", category: "fha", topic: "FHA Condominium", keywords: ["condo", "condominium", "hoa", "condo approval"] },
   { filename: "Chapter_18.pdf", category: "fha", topic: "FHA 203k Rehabilitation", keywords: ["203k", "rehabilitation", "rehab", "renovation", "fixer"] },
 
-  // ── VA Chapters ──
+  // ── VA Chapters (small, focused) ──
   { filename: "VA Table_of_Contents.pdf", category: "va", topic: "VA Handbook Overview", keywords: ["va overview", "va contents"] },
   { filename: "chapter2-veterans-eligibility-and-entitlement.pdf", category: "va", topic: "VA Eligibility & Entitlement", keywords: ["eligibility", "entitlement", "coe", "dd-214", "veteran status", "active duty", "national guard", "reserves", "surviving spouse"] },
   { filename: "chapter3-the-va-loan-and-guaranty.pdf", category: "va", topic: "VA Loan & Guaranty", keywords: ["guaranty", "guarantee", "va loan types", "purchase", "construction", "loan limits"] },
@@ -35,25 +37,32 @@ export const DOC_CATALOG: DocMeta[] = [
   { filename: "chapter8-borrower-fees-and-charges-and-the-va-funding-fee.pdf", category: "va", topic: "VA Fees & Funding Fee", keywords: ["fees", "funding fee", "charges", "closing costs", "discount points", "va funding"] },
   { filename: "ch9-legal-instruments-liens-escrows-and-related-issues.pdf", category: "va", topic: "VA Legal Instruments & Liens", keywords: ["legal", "lien", "escrow", "deed of trust", "note", "title"] },
 
-  // ── Conventional ──
-  { filename: "Selling-Guide_12-11-24 Highighted.pdf", category: "conventional", topic: "Fannie Mae Selling Guide (Dec 2024)", keywords: ["fannie mae", "fnma", "conventional", "conforming", "du", "desktop underwriter", "homeready", "selling guide"] },
-  // Freddie Mac (20MB) is too large for direct API calls - rely on system prompt knowledge
-  // { filename: "Freddie Mac Selling Guide 10.2.24.pdf", category: "conventional", ... },
-
-  // ── USDA ──
-  // USDA handbook (6.7MB) exceeds our per-doc size limit - included selectively
-  { filename: "USDA hb-1-3555_0 12.2.24.pdf", category: "usda", topic: "USDA Rural Development Handbook", keywords: ["usda", "rural", "rural development", "grh", "guarantee fee", "income limits", "rural area"] },
+  // Conventional & USDA large docs excluded - system prompt has deep knowledge
 ];
 
 // ── In-memory base64 cache ──
 const b64Cache = new Map<string, string>();
+const sizeCache = new Map<string, number>();
+
+function getFileSize(filename: string): number {
+  if (sizeCache.has(filename)) return sizeCache.get(filename)!;
+  try {
+    const size = statSync(join(DOCS_DIR, filename)).size;
+    sizeCache.set(filename, size);
+    return size;
+  } catch { return Infinity; }
+}
+
+function estimatePages(filename: string): number {
+  return Math.ceil(getFileSize(filename) / BYTES_PER_PAGE);
+}
 
 export function loadDocBase64(filename: string): string | null {
   if (b64Cache.has(filename)) return b64Cache.get(filename)!;
   const filepath = join(DOCS_DIR, filename);
   try {
-    const stat = statSync(filepath);
-    if (stat.size > MAX_DOC_SIZE) return null;
+    const size = getFileSize(filename);
+    if (size > MAX_DOC_SIZE) return null;
     const buf = readFileSync(filepath);
     const b64 = buf.toString("base64");
     b64Cache.set(filename, b64);
@@ -63,7 +72,7 @@ export function loadDocBase64(filename: string): string | null {
   }
 }
 
-/** Route a question to the most relevant guideline documents */
+/** Route a question to the most relevant guideline documents, respecting page budget */
 export function routeDocs(question: string, conversationContext?: string): DocMeta[] {
   const q = (question + " " + (conversationContext || "")).toLowerCase();
 
@@ -92,24 +101,23 @@ export function routeDocs(question: string, conversationContext?: string): DocMe
     scores.fha += 3; scores.va += 3; scores.conventional += 3; scores.usda += 2;
   }
 
-  // If no signals at all, assume general mortgage question
+  // If no signals, assume general question - rely on system prompt knowledge, skip docs
   const maxScore = Math.max(...Object.values(scores));
-  if (maxScore === 0) {
-    scores.fha = 1; scores.va = 1; scores.conventional = 1;
-  }
+  if (maxScore === 0) return [];
 
   // ── Pick categories with meaningful scores ──
   const activeCats = Object.entries(scores)
     .filter(([, s]) => s > 0)
     .sort((a, b) => b[1] - a[1]);
 
+  // ── Select docs with page budget ──
   const selected: DocMeta[] = [];
-  const totalBudget = 4; // max docs to send
-  let remaining = totalBudget;
+  let pagesUsed = 0;
 
   for (const [cat] of activeCats) {
-    if (remaining <= 0) break;
+    if (pagesUsed >= PAGE_BUDGET) break;
     const catDocs = DOC_CATALOG.filter(d => d.category === cat);
+    if (catDocs.length === 0) continue; // no docs for conventional/usda
 
     // Score each doc by keyword hits
     const scored = catDocs.map(doc => {
@@ -117,17 +125,20 @@ export function routeDocs(question: string, conversationContext?: string): DocMe
       return { doc, hits };
     }).sort((a, b) => b.hits - a.hits);
 
-    const take = Math.min(remaining, activeCats.length <= 2 ? 2 : 1);
-    for (let i = 0; i < take && i < scored.length; i++) {
-      selected.push(scored[i].doc);
-      remaining--;
+    // Take best doc(s) that fit within page budget
+    const maxPerCat = activeCats.length <= 2 ? 2 : 1;
+    let taken = 0;
+    for (const { doc } of scored) {
+      if (taken >= maxPerCat) break;
+      const size = getFileSize(doc.filename);
+      if (size > MAX_DOC_SIZE) continue; // skip oversized
+      const pages = estimatePages(doc.filename);
+      if (pagesUsed + pages > PAGE_BUDGET) continue; // would bust budget
+      selected.push(doc);
+      pagesUsed += pages;
+      taken++;
     }
   }
 
-  // Filter to only loadable docs
-  return selected.filter(d => {
-    try {
-      return statSync(join(DOCS_DIR, d.filename)).size <= MAX_DOC_SIZE;
-    } catch { return false; }
-  });
+  return selected;
 }
