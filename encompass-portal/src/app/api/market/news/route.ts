@@ -45,10 +45,51 @@ function parseRSSItems(xml: string, category: string): NewsItem[] {
   return items;
 }
 
+const STATE_NAMES: Record<string, string> = {
+  AL:"Alabama",AK:"Alaska",AZ:"Arizona",AR:"Arkansas",CA:"California",CO:"Colorado",
+  CT:"Connecticut",DE:"Delaware",FL:"Florida",GA:"Georgia",HI:"Hawaii",ID:"Idaho",
+  IL:"Illinois",IN:"Indiana",IA:"Iowa",KS:"Kansas",KY:"Kentucky",LA:"Louisiana",
+  ME:"Maine",MD:"Maryland",MA:"Massachusetts",MI:"Michigan",MN:"Minnesota",MS:"Mississippi",
+  MO:"Missouri",MT:"Montana",NE:"Nebraska",NV:"Nevada",NH:"New Hampshire",NJ:"New Jersey",
+  NM:"New Mexico",NY:"New York",NC:"North Carolina",ND:"North Dakota",OH:"Ohio",OK:"Oklahoma",
+  OR:"Oregon",PA:"Pennsylvania",RI:"Rhode Island",SC:"South Carolina",SD:"South Dakota",
+  TN:"Tennessee",TX:"Texas",UT:"Utah",VT:"Vermont",VA:"Virginia",WA:"Washington",
+  WV:"West Virginia",WI:"Wisconsin",WY:"Wyoming",DC:"District of Columbia",
+};
+
+function buildStateNewsUrl(stateName: string): string {
+  const q = encodeURIComponent(`"${stateName}" ("housing market" OR "real estate" OR "mortgage" OR "home prices" OR "home sales")`);
+  return `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const cat = req.nextUrl.searchParams.get("category") || "";
-    const feedEntries = cat && FEEDS[cat] ? [[cat, FEEDS[cat]]] : Object.entries(FEEDS);
+    const states = req.nextUrl.searchParams.get("states") || ""; // e.g. "CA,TX,FL,NC"
+
+    // Determine which feeds to fetch
+    const feedEntries: [string, string][] = [];
+
+    if (cat === "local-market" && states) {
+      // Local market only: fetch news for specified states
+      const stateList = states.split(",").slice(0, 8); // max 8 states
+      for (const st of stateList) {
+        const name = STATE_NAMES[st.trim()];
+        if (name) feedEntries.push([`local:${st.trim()}`, buildStateNewsUrl(name)]);
+      }
+    } else if (cat && FEEDS[cat]) {
+      feedEntries.push([cat, FEEDS[cat]]);
+    } else {
+      // All categories + local news for top states
+      feedEntries.push(...Object.entries(FEEDS));
+      if (states) {
+        const stateList = states.split(",").slice(0, 5); // top 5 for "all" view
+        for (const st of stateList) {
+          const name = STATE_NAMES[st.trim()];
+          if (name) feedEntries.push([`local:${st.trim()}`, buildStateNewsUrl(name)]);
+        }
+      }
+    }
 
     const results = await Promise.allSettled(
       feedEntries.map(async ([key, url]) => {
@@ -58,13 +99,23 @@ export async function GET(req: NextRequest) {
         });
         if (!res.ok) return [];
         const xml = await res.text();
-        return parseRSSItems(xml, key);
+        const category = key.startsWith("local:") ? "local-market" : key;
+        return parseRSSItems(xml, category);
       })
     );
 
     const allItems: NewsItem[] = [];
+    const seenTitles = new Set<string>(); // deduplicate
     for (const r of results) {
-      if (r.status === "fulfilled") allItems.push(...r.value);
+      if (r.status === "fulfilled") {
+        for (const item of r.value) {
+          const normalized = item.title.toLowerCase().trim();
+          if (!seenTitles.has(normalized)) {
+            seenTitles.add(normalized);
+            allItems.push(item);
+          }
+        }
+      }
     }
 
     // Sort by date descending

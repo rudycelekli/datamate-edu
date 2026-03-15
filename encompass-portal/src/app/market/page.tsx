@@ -7,7 +7,7 @@ import {
 } from "recharts";
 import {
   Loader2, TrendingUp, TrendingDown, Newspaper, RefreshCw, ExternalLink,
-  Clock, ArrowUpRight, ArrowDownRight, Minus, AlertTriangle, MapPin,
+  Clock, ArrowUpRight, ArrowDownRight, Minus, MapPin,
 } from "lucide-react";
 import {
   getMarketCache,
@@ -49,6 +49,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   "housing-market": "Housing Market",
   "fed-policy": "Fed & Policy",
   "lending-industry": "Lending Industry",
+  "local-market": "Local Markets",
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -56,6 +57,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   "housing-market": "bg-blue-100 text-blue-700 border-blue-200",
   "fed-policy": "bg-purple-100 text-purple-700 border-purple-200",
   "lending-industry": "bg-emerald-100 text-emerald-700 border-emerald-200",
+  "local-market": "bg-amber-100 text-amber-700 border-amber-200",
 };
 
 function timeAgo(dateStr: string): string {
@@ -117,14 +119,23 @@ export default function MarketPage() {
 
   // Connection status now handled by AppHeader
 
+  // ─── Pipeline exposure for news context ───
+  const stateBreakdown = getPipelineStateBreakdown();
+
+  // Get top pipeline states for local news
+  const topStates = stateBreakdown?.slice(0, 5).map(s => s.state).join(",") || "";
+
   const fetchNews = useCallback(async (cat?: string, force = false) => {
     // Skip if cache is fresh and no category filter change
     if (!force && !cat && isMarketFresh()) return;
     setNewsLoading(true);
     setNewsError("");
     try {
-      const params = cat ? `?category=${cat}` : "";
-      const res = await fetch(`/api/market/news${params}`);
+      const query = new URLSearchParams();
+      if (cat) query.set("category", cat);
+      if (topStates) query.set("states", topStates);
+      const qs = query.toString();
+      const res = await fetch(`/api/market/news${qs ? `?${qs}` : ""}`);
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setNews(data.items || []);
@@ -142,7 +153,7 @@ export default function MarketPage() {
     } finally {
       setNewsLoading(false);
     }
-  }, []);
+  }, [topStates]);
 
   const fetchRates = useCallback(async (force = false) => {
     if (!force && isMarketFresh()) return;
@@ -207,9 +218,6 @@ export default function MarketPage() {
     return { ...r, label };
   });
 
-  // ─── Pipeline exposure for news context ───
-  const stateBreakdown = getPipelineStateBreakdown();
-
   // Map state abbreviations to full names for news matching
   const STATE_NAMES: Record<string, string> = {
     AL:"Alabama",AK:"Alaska",AZ:"Arizona",AR:"Arkansas",CA:"California",CO:"Colorado",
@@ -226,7 +234,7 @@ export default function MarketPage() {
   // Find news articles mentioning states in our pipeline
   const newsWithExposure = news.map(item => {
     const title = item.title.toLowerCase();
-    const matchedStates: Array<{ state: string; pct: number; count: number }> = [];
+    const matchedStates: Array<{ state: string; pct: number; count: number; volume: number }> = [];
     if (stateBreakdown) {
       for (const s of stateBreakdown) {
         const fullName = STATE_NAMES[s.state]?.toLowerCase() || "";
@@ -236,7 +244,7 @@ export default function MarketPage() {
           title.startsWith(`${s.state.toLowerCase()} `) ||
           title.endsWith(` ${s.state.toLowerCase()}`)
         ) {
-          matchedStates.push({ state: s.state, pct: s.pct, count: s.count });
+          matchedStates.push({ state: s.state, pct: s.pct, count: s.count, volume: s.volume });
         }
       }
     }
@@ -505,11 +513,11 @@ export default function MarketPage() {
                     </div>
                     {/* Pipeline exposure flag */}
                     {item.matchedStates.length > 0 && (
-                      <div className="flex items-center gap-1.5 mt-1.5">
-                        <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                        <MapPin className="w-3 h-3 text-amber-500 shrink-0" />
                         {item.matchedStates.map(ms => (
                           <span key={ms.state} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px] font-medium border border-amber-200">
-                            {ms.state}: {ms.pct.toFixed(1)}% of pipeline ({ms.count} loans)
+                            {ms.state}: {ms.count} loans · ${(ms.volume / 1e6).toFixed(1)}M · {ms.pct.toFixed(1)}%
                           </span>
                         ))}
                       </div>
