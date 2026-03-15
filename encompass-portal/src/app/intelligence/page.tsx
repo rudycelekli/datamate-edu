@@ -697,9 +697,9 @@ export default function IntelligencePage() {
       {/* Header */}
       <header className="border-b border-[var(--border)] bg-white sticky top-0 z-50">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-4 sm:gap-5">
             <Image src="/logo.png" alt="Premier Lending" width={180} height={40} className="h-7 sm:h-9 w-auto" priority />
-            <div className="w-px h-6 sm:h-8 bg-[var(--border)] mx-1 sm:mx-2" />
+            <div className="w-px h-6 sm:h-8 bg-[var(--border)]" />
             <Link href="/" className="text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
               Pipeline
             </Link>
@@ -709,6 +709,10 @@ export default function IntelligencePage() {
             </span>
             <Link href="/market" className="text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
               Market
+            </Link>
+            <Link href="/milo" className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
+              <MessageSquare className="w-3 sm:w-3.5 h-3 sm:h-3.5" />
+              Milo AI
             </Link>
           </div>
           <div className="flex items-center gap-2 text-xs">
