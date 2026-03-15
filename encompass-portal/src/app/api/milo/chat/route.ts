@@ -230,9 +230,11 @@ export async function POST(req: NextRequest) {
   }
 
   let messages: ChatMessage[];
+  let pipelineContext: string | null = null;
   try {
     const body = await req.json();
     messages = body.messages;
+    pipelineContext = body.pipelineContext || null;
     if (!Array.isArray(messages) || messages.length === 0) {
       return new Response(JSON.stringify({ error: "messages required" }), {
         status: 400,
@@ -303,7 +305,9 @@ export async function POST(req: NextRequest) {
         model: "claude-sonnet-4-20250514",
         max_tokens: 8192,
         stream: true,
-        system: SYSTEM_PROMPT,
+        system: SYSTEM_PROMPT + (pipelineContext
+          ? `\n\n## Live Pipeline Data\nYou have access to the user's current loan pipeline. When they ask about their pipeline, loans, or portfolio, reference this data:\n\n${pipelineContext}\n\nUse this data to give specific, data-driven answers about their current book of business.`
+          : ""),
         messages: apiMessages,
       }),
     });

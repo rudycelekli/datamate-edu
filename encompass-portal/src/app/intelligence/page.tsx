@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import Link from "next/link";
-import Image from "next/image";
+import AppHeader from "@/components/AppHeader";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
   CartesianGrid, LineChart, Line,
@@ -97,7 +96,7 @@ export default function IntelligencePage() {
   const [loading, setLoading] = useState(() => !getIntelCache().rows);
   const [error, setError] = useState("");
   const [expandedSection, setExpandedSection] = useState<Section | null>("snapshot");
-  const [connected, setConnected] = useState<boolean | null>(() => getConnectedStatus());
+  // Connection status now handled by AppHeader
   const [cacheAge, setCacheAge] = useState(() => getIntelCache().meta?.cacheAge || 0);
   const [totalInCache, setTotalInCache] = useState(() => getIntelCache().meta?.total || 0);
   const [warmingProgress, setWarmingProgress] = useState(0);
@@ -175,13 +174,7 @@ export default function IntelligencePage() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  useEffect(() => {
-    if (getConnectedStatus() !== null) { setConnected(getConnectedStatus()); return; }
-    fetch("/api/auth/test")
-      .then((r) => r.json())
-      .then((d) => { setConnected(d.success); setConnectedStatus(d.success); })
-      .catch(() => { setConnected(false); setConnectedStatus(false); });
-  }, []);
+  // Connection status check now handled by AppHeader
 
   // ─── Filter options (from raw data) ───
   const filterOptions = useMemo(() => {
@@ -671,38 +664,7 @@ export default function IntelligencePage() {
 
   return (
     <div className="min-h-screen">
-      {/* Header */}
-      <header className="border-b border-[var(--border)] bg-white sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4 sm:gap-5">
-            <Image src="/logo.png" alt="Premier Lending" width={180} height={40} className="h-7 sm:h-9 w-auto" priority />
-            <div className="w-px h-6 sm:h-8 bg-[var(--border)]" />
-            <Link href="/" className="text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              Pipeline
-            </Link>
-            <span className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-semibold text-[var(--text)] border-b-2 border-[var(--accent)] pb-0.5">
-              <BarChart3 className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-[var(--accent)]" />
-              Intelligence
-            </span>
-            <Link href="/market" className="text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              Market
-            </Link>
-            <Link href="/milo" className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              <MessageSquare className="w-3 sm:w-3.5 h-3 sm:h-3.5" />
-              Milo AI
-            </Link>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            {totalInCache > 0 && (
-              <span className="text-[var(--text-muted)] hidden sm:inline mr-2">{totalInCache.toLocaleString()} loans</span>
-            )}
-            <span className={`w-2 h-2 rounded-full ${connected === true ? "bg-emerald-500 pulse-dot" : connected === false ? "bg-red-500" : "bg-amber-500"}`} />
-            <span className="text-[var(--text-muted)] hidden sm:inline">
-              {connected === true ? "Connected" : connected === false ? "Disconnected" : "Connecting..."}
-            </span>
-          </div>
-        </div>
-      </header>
+      <AppHeader activeTab="intelligence" />
 
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
         {error && (

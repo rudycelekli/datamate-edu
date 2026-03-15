@@ -32,7 +32,10 @@ export async function GET(req: NextRequest) {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `inline; filename="${safe}"`,
+        "Content-Length": String(buf.length),
         "Cache-Control": "public, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+        "Accept-Ranges": "bytes",
       },
     });
   } catch {

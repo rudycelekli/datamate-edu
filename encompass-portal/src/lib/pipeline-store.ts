@@ -110,6 +110,33 @@ export function isMarketFresh(): boolean {
   return _marketCache !== null && (Date.now() - _marketFetchTime) < STALE_MS;
 }
 
+// ── Global warming / pipeline status (visible across all tabs) ──
+
+let _warmingStatus = false;
+let _warmingLoadedSoFar = 0;
+let _warmingCacheAge = 0;
+let _warmingTotal = 0;
+
+export function getWarmingStatus() {
+  // Prefer pipeline cache if it has data
+  if (_pipelineCache) {
+    return {
+      warming: !!_pipelineCache._warming,
+      loadedSoFar: _pipelineCache._loadedSoFar || _warmingLoadedSoFar,
+      cacheAge: _pipelineCache.cacheAge || _warmingCacheAge,
+      total: _pipelineCache.total || _warmingTotal,
+    };
+  }
+  return { warming: _warmingStatus, loadedSoFar: _warmingLoadedSoFar, cacheAge: _warmingCacheAge, total: _warmingTotal };
+}
+
+export function setWarmingStatus(warming: boolean, loadedSoFar: number, cacheAge?: number, total?: number) {
+  _warmingStatus = warming;
+  _warmingLoadedSoFar = loadedSoFar;
+  if (cacheAge !== undefined) _warmingCacheAge = cacheAge;
+  if (total !== undefined) _warmingTotal = total;
+}
+
 // ── Connection status (shared across all pages) ──
 
 export function getConnectedStatus(): boolean | null {
@@ -118,6 +145,79 @@ export function getConnectedStatus(): boolean | null {
 
 export function setConnectedStatus(status: boolean) {
   _connectedStatus = status;
+}
+
+// ── Pipeline summary for Milo / Market insights ──
+
+export function getPipelineSummary(): string | null {
+  // Use intel cache (full data) if available, else pipeline cache (partial)
+  const rows = _intelRows || _pipelineCache?.rows;
+  if (!rows || rows.length === 0) return null;
+
+  const total = _intelMeta?.total || _pipelineCache?.total || rows.length;
+  const volume = rows.reduce((s, r) => s + (parseFloat(r.fields?.["Loan.LoanAmount"] || "0") || 0), 0);
+
+  const stateCounts: Record<string, { count: number; volume: number }> = {};
+  const milestoneCounts: Record<string, number> = {};
+  const programCounts: Record<string, number> = {};
+
+  rows.forEach(r => {
+    const f = r.fields || {};
+    const st = f["Loan.SubjectPropertyState"] || f["Fields.14"] || "";
+    const ms = f["Loan.CurrentMilestoneName"] || "";
+    const prog = f["Loan.LoanProgram"] || "";
+    const amt = parseFloat(f["Loan.LoanAmount"] || "0") || 0;
+
+    if (st) {
+      if (!stateCounts[st]) stateCounts[st] = { count: 0, volume: 0 };
+      stateCounts[st].count++;
+      stateCounts[st].volume += amt;
+    }
+    if (ms) milestoneCounts[ms] = (milestoneCounts[ms] || 0) + 1;
+    if (prog) programCounts[prog] = (programCounts[prog] || 0) + 1;
+  });
+
+  const topStates = Object.entries(stateCounts)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 15)
+    .map(([st, d]) => `${st}: ${d.count} loans ($${(d.volume / 1e6).toFixed(1)}M, ${((d.count / total) * 100).toFixed(1)}%)`)
+    .join("\n");
+
+  const milestones = Object.entries(milestoneCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([ms, cnt]) => `${ms}: ${cnt}`)
+    .join(", ");
+
+  const programs = Object.entries(programCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([p, cnt]) => `${p}: ${cnt}`)
+    .join(", ");
+
+  return `Current Pipeline Summary (${total} loans, $${(volume / 1e6).toFixed(1)}M total volume):\n\nTop States:\n${topStates}\n\nMilestones: ${milestones}\n\nPrograms: ${programs}`;
+}
+
+/** State breakdown for Market page insights */
+export function getPipelineStateBreakdown(): Array<{ state: string; count: number; volume: number; pct: number }> | null {
+  const rows = _intelRows || _pipelineCache?.rows;
+  if (!rows || rows.length === 0) return null;
+
+  const total = rows.length;
+  const stateCounts: Record<string, { count: number; volume: number }> = {};
+
+  rows.forEach(r => {
+    const f = r.fields || {};
+    const st = f["Loan.SubjectPropertyState"] || f["Fields.14"] || "";
+    const amt = parseFloat(f["Loan.LoanAmount"] || "0") || 0;
+    if (st) {
+      if (!stateCounts[st]) stateCounts[st] = { count: 0, volume: 0 };
+      stateCounts[st].count++;
+      stateCounts[st].volume += amt;
+    }
+  });
+
+  return Object.entries(stateCounts)
+    .sort((a, b) => b[1].count - a[1].count)
+    .map(([state, d]) => ({ state, count: d.count, volume: d.volume, pct: (d.count / total) * 100 }));
 }
 
 // ── Compact row helper (shared between pipeline and intel) ──

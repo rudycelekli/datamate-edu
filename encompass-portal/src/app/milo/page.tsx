@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import Link from "next/link";
-import Image from "next/image";
 import {
-  Send, Loader2, Trash2, BarChart3, Sparkles, BookOpen,
-  MessageSquare, ChevronDown, AlertCircle, FileText, X,
+  Send, Loader2, Trash2, Sparkles, BookOpen,
+  ChevronDown, AlertCircle, FileText, X, Database,
 } from "lucide-react";
+import AppHeader from "@/components/AppHeader";
+import { getPipelineSummary } from "@/lib/pipeline-store";
 
 // ── Types ──
 interface Message {
@@ -315,6 +315,7 @@ export default function MiloPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
+          pipelineContext: getPipelineSummary(),
         }),
         signal: controller.signal,
       });
@@ -393,38 +394,18 @@ export default function MiloPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="border-b border-[var(--border)] bg-white sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4 sm:gap-5">
-            <Image src="/logo.png" alt="Premier Lending" width={180} height={40} className="h-7 sm:h-9 w-auto" priority />
-            <div className="w-px h-6 sm:h-8 bg-[var(--border)]" />
-            <Link href="/" className="text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              Pipeline
-            </Link>
-            <Link href="/intelligence" className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              <BarChart3 className="w-3 sm:w-3.5 h-3 sm:h-3.5" />
-              Intelligence
-            </Link>
-            <Link href="/market" className="text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              Market
-            </Link>
-            <span className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-semibold text-[var(--text)] border-b-2 border-[var(--accent)] pb-0.5">
-              <Sparkles className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-[var(--accent)]" />
-              Milo AI
-            </span>
-          </div>
-          {hasMessages && (
-            <button
-              onClick={clearChat}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Clear Chat
-            </button>
-          )}
-        </div>
-      </header>
+      <AppHeader
+        activeTab="milo"
+        rightContent={hasMessages ? (
+          <button
+            onClick={clearChat}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Clear Chat
+          </button>
+        ) : undefined}
+      />
 
       {/* Main Content - adjusts width when PDF panel is open */}
       <div className={`flex-1 flex flex-col mx-auto w-full transition-all duration-300 ${pdfPanel ? "max-w-[50%]" : "max-w-[900px]"}`}>
@@ -452,9 +433,11 @@ export default function MiloPage() {
                 <span className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 rounded-full text-xs font-medium">
                   <FileText className="w-3 h-3" /> Clickable Citations
                 </span>
-                <span className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 text-purple-700 rounded-full text-xs font-medium">
-                  <MessageSquare className="w-3 h-3" /> Scenario Analysis
-                </span>
+                {getPipelineSummary() && (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 text-orange-700 rounded-full text-xs font-medium">
+                    <Database className="w-3 h-3" /> Pipeline Data Connected
+                  </span>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-2xl">
@@ -604,13 +587,20 @@ export default function MiloPage() {
             </button>
           </div>
 
-          {/* PDF iframe */}
-          <div className="flex-1">
-            <iframe
-              src={`/api/milo/docs?file=${encodeURIComponent(pdfPanel.file)}`}
-              className="w-full h-full border-0"
+          {/* PDF viewer */}
+          <div className="flex-1 relative">
+            <object
+              data={`/api/milo/docs?file=${encodeURIComponent(pdfPanel.file)}#toolbar=1&view=FitH`}
+              type="application/pdf"
+              className="w-full h-full"
               title={`PDF: ${pdfPanel.file}`}
-            />
+            >
+              <iframe
+                src={`/api/milo/docs?file=${encodeURIComponent(pdfPanel.file)}#toolbar=1&view=FitH`}
+                className="w-full h-full border-0"
+                title={`PDF: ${pdfPanel.file}`}
+              />
+            </object>
           </div>
         </div>
       )}

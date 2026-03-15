@@ -2,10 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import Image from "next/image";
 import {
-  Search,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
@@ -18,17 +15,14 @@ import {
   ChevronUp,
   ChevronDown,
   Sparkles,
-  BarChart3,
-  Clock,
-  MessageSquare,
 } from "lucide-react";
 import {
   getPipelineCache,
   setPipelineCache,
   isPipelineFresh,
-  getConnectedStatus,
-  setConnectedStatus,
+  setWarmingStatus,
 } from "@/lib/pipeline-store";
+import AppHeader from "@/components/AppHeader";
 
 interface PipelineRow {
   loanGuid: string;
@@ -144,7 +138,6 @@ export default function PipelinePage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const [connected, setConnected] = useState<boolean | null>(() => getConnectedStatus());
   const [isWarming, setIsWarming] = useState(() => getPipelineCache().data?._warming || false);
   const [loadedSoFar, setLoadedSoFar] = useState(() => getPipelineCache().data?._loadedSoFar || 0);
   const pageSize = 50;
@@ -223,14 +216,6 @@ export default function PipelinePage() {
   }, [page, search, sortKey, sortDir, milestoneFilter, loFilter, stateFilter, purposeFilter, lockFilter, programFilter, amountMin, amountMax, rateMin, rateMax, dateFrom, dateTo]);
 
   useEffect(() => {
-    if (getConnectedStatus() !== null) return;
-    fetch("/api/auth/test")
-      .then((r) => r.json())
-      .then((d) => { setConnected(d.success); setConnectedStatus(d.success); })
-      .catch(() => { setConnected(false); setConnectedStatus(false); });
-  }, []);
-
-  useEffect(() => {
     fetchPipeline();
   }, [fetchPipeline]);
 
@@ -242,6 +227,7 @@ export default function PipelinePage() {
         const res = await fetch("/api/pipeline/stats");
         const status = await res.json();
         setLoadedSoFar(status.loadedSoFar || 0);
+        setWarmingStatus(status.state !== "ready", status.loadedSoFar || 0, undefined, status.total);
         if (status.state === "ready") {
           setIsWarming(false);
           fetchPipeline(); // Refresh to get full cached data
@@ -315,44 +301,7 @@ export default function PipelinePage() {
 
   return (
     <div className="min-h-screen">
-      {/* Header */}
-      <header className="border-b border-[var(--border)] bg-white sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4 sm:gap-5">
-            <Image src="/logo.png" alt="Premier Lending" width={180} height={40} className="h-7 sm:h-9 w-auto" priority />
-            <div className="w-px h-6 sm:h-8 bg-[var(--border)]" />
-            <span className="text-xs sm:text-sm font-semibold text-[var(--text)] border-b-2 border-[var(--accent)] pb-0.5">Pipeline</span>
-            <Link href="/intelligence" className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              <BarChart3 className="w-3 sm:w-3.5 h-3 sm:h-3.5" />
-              Intelligence
-            </Link>
-            <Link href="/market" className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              Market
-            </Link>
-            <Link href="/milo" className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              <MessageSquare className="w-3 sm:w-3.5 h-3 sm:h-3.5" />
-              Milo AI
-            </Link>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            {cacheAge > 0 && (
-              <span className="flex items-center gap-1 text-[var(--text-muted)]">
-                <Clock className="w-3 h-3" />
-                {formatCacheAge(cacheAge)}
-              </span>
-            )}
-            {isWarming && (
-              <span className="text-amber-600 text-[10px] font-medium">
-                Loading full pipeline... {loadedSoFar > 0 ? `${loadedSoFar.toLocaleString()} loans loaded` : "starting"}
-              </span>
-            )}
-            <span className={`w-2 h-2 rounded-full ${connected === true ? "bg-emerald-500 pulse-dot" : connected === false ? "bg-red-500" : "bg-amber-500"}`} />
-            <span className="text-[var(--text-muted)] hidden sm:inline">
-              {connected === true ? "Connected" : connected === false ? "Disconnected" : "Connecting..."}
-            </span>
-          </div>
-        </div>
-      </header>
+      <AppHeader activeTab="pipeline" />
 
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
         {/* AI Search */}
@@ -379,6 +328,15 @@ export default function PipelinePage() {
               {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Search"}
             </button>
           </form>
+          {aiRows !== null && (
+            <button
+              onClick={clearAiSearch}
+              className="flex items-center gap-1.5 px-3 py-2.5 bg-orange-50 border border-orange-200 rounded-lg text-xs font-medium text-orange-700 hover:bg-orange-100 transition-colors whitespace-nowrap"
+            >
+              <X className="w-3.5 h-3.5" />
+              Clear AI
+            </button>
+          )}
           <button
             onClick={() => { clearAiSearch(); fetchPipeline(true); }}
             disabled={loading}

@@ -139,12 +139,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Query Encompass with the AI-built filter
+    // Query Encompass with the AI-built filter (no result limit)
     const rows = await searchPipelineWithFilters(
       parsed.filter,
       parsed.sortOrder,
       0,
-      200,
+      10000,
     );
 
     return NextResponse.json({

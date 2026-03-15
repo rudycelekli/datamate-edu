@@ -1,21 +1,19 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import Link from "next/link";
-import Image from "next/image";
+import AppHeader from "@/components/AppHeader";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import {
   Loader2, TrendingUp, TrendingDown, Newspaper, RefreshCw, ExternalLink,
-  BarChart3, Globe, Clock, ArrowUpRight, ArrowDownRight, Minus, MessageSquare,
+  Clock, ArrowUpRight, ArrowDownRight, Minus, AlertTriangle, MapPin,
 } from "lucide-react";
 import {
   getMarketCache,
   setMarketCache,
   isMarketFresh,
-  getConnectedStatus,
-  setConnectedStatus,
+  getPipelineStateBreakdown,
 } from "@/lib/pipeline-store";
 
 // ─── Types ───
@@ -117,15 +115,7 @@ export default function MarketPage() {
   const [ratesLoading, setRatesLoading] = useState(() => !getMarketCache().data);
   const [ratesFetchedAt, setRatesFetchedAt] = useState(() => getMarketCache().data?.ratesFetchedAt || "");
 
-  const [connected, setConnected] = useState<boolean | null>(() => getConnectedStatus());
-
-  useEffect(() => {
-    if (getConnectedStatus() !== null) { setConnected(getConnectedStatus()); return; }
-    fetch("/api/auth/test")
-      .then((r) => r.json())
-      .then((d) => { setConnected(d.success); setConnectedStatus(d.success); })
-      .catch(() => { setConnected(false); setConnectedStatus(false); });
-  }, []);
+  // Connection status now handled by AppHeader
 
   const fetchNews = useCallback(async (cat?: string, force = false) => {
     // Skip if cache is fresh and no category filter change
@@ -217,40 +207,81 @@ export default function MarketPage() {
     return { ...r, label };
   });
 
+  // ─── Pipeline exposure for news context ───
+  const stateBreakdown = getPipelineStateBreakdown();
+
+  // Map state abbreviations to full names for news matching
+  const STATE_NAMES: Record<string, string> = {
+    AL:"Alabama",AK:"Alaska",AZ:"Arizona",AR:"Arkansas",CA:"California",CO:"Colorado",
+    CT:"Connecticut",DE:"Delaware",FL:"Florida",GA:"Georgia",HI:"Hawaii",ID:"Idaho",
+    IL:"Illinois",IN:"Indiana",IA:"Iowa",KS:"Kansas",KY:"Kentucky",LA:"Louisiana",
+    ME:"Maine",MD:"Maryland",MA:"Massachusetts",MI:"Michigan",MN:"Minnesota",MS:"Mississippi",
+    MO:"Missouri",MT:"Montana",NE:"Nebraska",NV:"Nevada",NH:"New Hampshire",NJ:"New Jersey",
+    NM:"New Mexico",NY:"New York",NC:"North Carolina",ND:"North Dakota",OH:"Ohio",OK:"Oklahoma",
+    OR:"Oregon",PA:"Pennsylvania",RI:"Rhode Island",SC:"South Carolina",SD:"South Dakota",
+    TN:"Tennessee",TX:"Texas",UT:"Utah",VT:"Vermont",VA:"Virginia",WA:"Washington",
+    WV:"West Virginia",WI:"Wisconsin",WY:"Wyoming",DC:"District of Columbia",
+  };
+
+  // Find news articles mentioning states in our pipeline
+  const newsWithExposure = news.map(item => {
+    const title = item.title.toLowerCase();
+    const matchedStates: Array<{ state: string; pct: number; count: number }> = [];
+    if (stateBreakdown) {
+      for (const s of stateBreakdown) {
+        const fullName = STATE_NAMES[s.state]?.toLowerCase() || "";
+        if (
+          title.includes(fullName) ||
+          title.includes(` ${s.state.toLowerCase()} `) ||
+          title.startsWith(`${s.state.toLowerCase()} `) ||
+          title.endsWith(` ${s.state.toLowerCase()}`)
+        ) {
+          matchedStates.push({ state: s.state, pct: s.pct, count: s.count });
+        }
+      }
+    }
+    return { ...item, matchedStates };
+  });
+
   return (
     <div className="min-h-screen">
-      {/* Header */}
-      <header className="border-b border-[var(--border)] bg-white sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4 sm:gap-5">
-            <Image src="/logo.png" alt="Premier Lending" width={180} height={40} className="h-7 sm:h-9 w-auto" priority />
-            <div className="w-px h-6 sm:h-8 bg-[var(--border)]" />
-            <Link href="/" className="text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              Pipeline
-            </Link>
-            <Link href="/intelligence" className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              <BarChart3 className="w-3 sm:w-3.5 h-3 sm:h-3.5" />
-              Intelligence
-            </Link>
-            <span className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-semibold text-[var(--text)] border-b-2 border-[var(--accent)] pb-0.5">
-              <Globe className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-[var(--accent)]" />
-              Market
-            </span>
-            <Link href="/milo" className="flex items-center gap-1 sm:gap-1.5 text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors pb-0.5">
-              <MessageSquare className="w-3 sm:w-3.5 h-3 sm:h-3.5" />
-              Milo AI
-            </Link>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className={`w-2 h-2 rounded-full ${connected === true ? "bg-emerald-500 pulse-dot" : connected === false ? "bg-red-500" : "bg-amber-500"}`} />
-            <span className="text-[var(--text-muted)] hidden sm:inline">
-              {connected === true ? "Connected" : connected === false ? "Disconnected" : "Connecting..."}
-            </span>
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        activeTab="market"
+        rightContent={
+          <button
+            onClick={() => { fetchNews(newsCategory || undefined, true); fetchRates(true); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${newsLoading || ratesLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        }
+      />
 
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
+
+        {/* ─── Pipeline Exposure Insights ─── */}
+        {stateBreakdown && stateBreakdown.length > 0 && (
+          <div className="glass-card p-4 mb-6 border-l-4 border-[var(--accent)]">
+            <h3 className="text-sm font-semibold flex items-center gap-2 mb-3">
+              <MapPin className="w-4 h-4 text-[var(--accent)]" />
+              Pipeline Exposure by State
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {stateBreakdown.slice(0, 10).map(s => (
+                <div key={s.state} className="flex items-center gap-1.5 px-2.5 py-1.5 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border)]">
+                  <span className="text-xs font-bold text-[var(--text)]">{s.state}</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">
+                    {s.count} loans ({s.pct.toFixed(1)}%) &middot; ${(s.volume / 1e6).toFixed(1)}M
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-[var(--text-muted)] mt-2">
+              News articles below are flagged when they mention states in your active pipeline
+            </p>
+          </div>
+        )}
 
         {/* ─── Rate Cards ─── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -452,7 +483,7 @@ export default function MarketPage() {
             <div className="text-sm text-gray-400 p-8 text-center">No news articles found</div>
           ) : (
             <div className="divide-y divide-[var(--border)]">
-              {news.map((item, i) => (
+              {newsWithExposure.map((item, i) => (
                 <a
                   key={i}
                   href={item.link}
@@ -472,6 +503,17 @@ export default function MarketPage() {
                       {item.source && <span className="font-medium">{item.source}</span>}
                       {item.pubDate && <span>{timeAgo(item.pubDate)}</span>}
                     </div>
+                    {/* Pipeline exposure flag */}
+                    {item.matchedStates.length > 0 && (
+                      <div className="flex items-center gap-1.5 mt-1.5">
+                        <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                        {item.matchedStates.map(ms => (
+                          <span key={ms.state} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px] font-medium border border-amber-200">
+                            {ms.state}: {ms.pct.toFixed(1)}% of pipeline ({ms.count} loans)
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </a>
               ))}
