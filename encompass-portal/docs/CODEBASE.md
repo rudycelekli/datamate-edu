@@ -110,7 +110,10 @@ encompass-portal/
 │       ├── field-definitions.ts # Encompass field ID → label maps
 │       ├── pipeline-cache.ts    # Server-side in-memory cache (legacy, being replaced by Supabase)
 │       ├── pipeline-store.ts    # Client-side sessionStorage cache
-│       └── milo-docs.ts         # PDF routing & chunking for Milo AI
+│       ├── milo-docs.ts         # PDF routing & chunking for Milo AI
+│       ├── pii-config.json      # Config-driven PII field definitions for loan context stripping
+│       ├── strip-pii.ts         # Recursive PII stripping engine (config-driven, returns deep clone)
+│       └── build-loan-context.ts # Rich markdown loan context builder for Milo AI (PII-free)
 ```
 
 ---
@@ -402,7 +405,7 @@ Collapsible left-side AI copilot panel for the Loan Detail page. Replicates full
 **Features**:
 - **Fixed left panel** (420px) with slide-in/out animation (`translate-x-0` / `-translate-x-full`). State preserved while panel is hidden.
 - **Full Milo AI chat**: Streaming SSE responses from `/api/milo/chat`, same system prompt and document knowledge (FHA, VA, Fannie Mae, Freddie Mac, USDA).
-- **Dynamic loan context**: Receives `loanContext` prop — a text summary of non-PII loan data (program, amount, rate, property, dates, milestones, pricing, doc summary). Injected into the AI system prompt alongside `pipelineContext`.
+- **Dynamic loan context**: Receives `loanContext` prop — a PII-stripped, rich markdown context built by `stripPii()` + `buildLoanContext()`. Includes loan overview, property (city/state/zip only), income & assets, document inventory, key dates, and loan team. Injected into the AI system prompt alongside `pipelineContext`.
 - **Citation support**: Same `【bracket notation】` parsing and clickable orange citation badges as Milo page. `SOURCE_TO_FILE` mapping resolves citations to PDF filenames.
 - **PDF side panel**: Fixed right-side overlay when a citation is clicked. Page jumping via URL fragment (`#page=N&search=term`). Uses `/api/milo/docs` to serve PDFs.
 - **Markdown renderer**: Full renderer for bold, tables, bullet/numbered lists, headers (h1-h3), code blocks, horizontal rules, and citation badges. Compact styling for sidebar width.
@@ -473,14 +476,16 @@ Custom SVG choropleth map of the US using TopoJSON (us-atlas).
 - Toggle button ("Milo AI" with Sparkles icon) in the header next to Refresh
 - Opens `LoanCopilot` component as a fixed left panel (420px)
 - Main content shifts right (`ml-[420px]` with CSS transition) when copilot is open
-- `buildLoanCtx()` function extracts non-PII loan data into a text summary:
-  - Loan basics: number, amount, rate, program, purpose, lien position, LTV, file status, credit score
-  - Property: address, city, state, zip, county, occupancy
-  - Loan team: LO, processor, channel
-  - Key dates: application, closing, lock, lock expiration, CD sent, COE
-  - Pricing: note rate, buy price, corp/branch/LO margins
-  - Milestones: name + status (complete/pending)
-  - Documents: summary counts (total docs, docs with files, total attachments)
+- PII stripping pipeline (`stripPii()` from `strip-pii.ts`) removes ~60 always-PII fields, custom fields, contact info, credit scores, street addresses, SSNs, etc. Config-driven via `pii-config.json`.
+- `buildLoanContext()` produces rich markdown context (~5x more detail than before):
+  - PII safety header (instructs AI not to reproduce/infer removed data)
+  - Loan overview: number, amount, rate, program, purpose, milestone, LTV/CLTV, DTI, AUS, QM
+  - Property: city/state/zip/county only (NO street addresses)
+  - Income & assets: monthly/annual income, asset totals, liability breakdown table
+  - Document inventory: eFolder summary, verification counts, disclosure counts, UW conditions
+  - Key dates & expirations: 18 date fields (application through flood expiration)
+  - Loan team: role/name pairs from milestones, milestone status
+- Memoized with `useMemo` (deps: `[loan, milestones, docs]`) for performance
 - The `loanContext` string is passed to the copilot, which sends it to `/api/milo/chat` alongside `pipelineContext`
 
 **Tabs**:
@@ -733,7 +738,7 @@ Streaming mortgage AI assistant.
 
 **Context injection** (appended to system prompt):
 - `pipelineContext` → `## Live Pipeline Data` section (portfolio-level stats from `getPipelineSummary()`)
-- `loanContext` → `## Current Loan Context` section (individual loan non-PII data from `buildLoanCtx()`). Enables the AI to answer questions about "this loan" with specific details about the program, amount, rate, property, dates, milestones, and pricing.
+- `loanContext` → `## Current Loan Context` section (PII-stripped loan data from `stripPii()` + `buildLoanContext()`). Rich markdown with loan overview, property (city/state/zip only), income/assets, document inventory, key dates, and loan team. No street addresses, credit scores, SSNs, or contact details reach the AI.
 
 ### 9.16 `milo/docs` — GET
 Serves PDF files for the Milo AI side panel.
