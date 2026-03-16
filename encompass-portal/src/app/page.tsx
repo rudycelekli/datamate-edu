@@ -321,14 +321,14 @@ export default function PipelinePage() {
 
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 py-4 sm:py-6">
         {/* AI Search */}
-        <div className="flex items-center gap-2 sm:gap-3 mb-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 mb-3">
           <form onSubmit={handleAiSearch} className="flex-1 relative">
             <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--accent)]" />
             <input
               type="text"
               value={aiQuery}
               onChange={(e) => setAiQuery(e.target.value)}
-              placeholder="Ask AI: e.g. &quot;Loans in NC closing this month over $400k&quot; or &quot;All FHA loans in processing&quot;..."
+              placeholder="Ask AI: &quot;Loans in NC closing this month over $400k&quot;..."
               className="w-full pl-10 pr-20 py-2.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg text-sm placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)]"
             />
             {aiRows !== null && (
@@ -344,23 +344,25 @@ export default function PipelinePage() {
               {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Search"}
             </button>
           </form>
-          {aiRows !== null && (
+          <div className="flex gap-2">
+            {aiRows !== null && (
+              <button
+                onClick={clearAiSearch}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2.5 bg-orange-50 border border-orange-200 rounded-lg text-xs font-medium text-orange-700 hover:bg-orange-100 transition-colors whitespace-nowrap"
+              >
+                <X className="w-3.5 h-3.5" />
+                Clear AI
+              </button>
+            )}
             <button
-              onClick={clearAiSearch}
-              className="flex items-center gap-1.5 px-3 py-2.5 bg-orange-50 border border-orange-200 rounded-lg text-xs font-medium text-orange-700 hover:bg-orange-100 transition-colors whitespace-nowrap"
+              onClick={() => { clearAiSearch(); fetchPipeline(true); }}
+              disabled={loading}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-[var(--border)] rounded-lg text-sm hover:bg-[var(--bg-secondary)] disabled:opacity-50"
             >
-              <X className="w-3.5 h-3.5" />
-              Clear AI
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+              <span className="sm:inline">Refresh</span>
             </button>
-          )}
-          <button
-            onClick={() => { clearAiSearch(); fetchPipeline(true); }}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2.5 bg-white border border-[var(--border)] rounded-lg text-sm hover:bg-[var(--bg-secondary)] disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
+          </div>
         </div>
         {/* AI result info */}
         {aiDescription && aiRows !== null && (
@@ -378,122 +380,119 @@ export default function PipelinePage() {
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <div className="glass-card p-4 flex items-center gap-3">
-            <FileText className="w-5 h-5 text-[var(--accent)]" />
-            <div>
-              <div className="text-xs text-[var(--text-muted)]">{aiRows !== null ? "AI Results" : "Total Loans"}</div>
-              <div className="text-lg font-semibold">{displayTotal.toLocaleString()}</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 mb-4">
+          <div className="glass-card p-3 sm:p-4 flex items-center gap-2 sm:gap-3">
+            <FileText className="w-4 sm:w-5 h-4 sm:h-5 text-[var(--accent)] shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-xs text-[var(--text-muted)]">{aiRows !== null ? "AI Results" : "Total Loans"}</div>
+              <div className="text-base sm:text-lg font-semibold truncate">{displayTotal.toLocaleString()}</div>
             </div>
           </div>
-          <div className="glass-card p-4 flex items-center gap-3">
-            <DollarSign className="w-5 h-5 text-emerald-600" />
-            <div>
-              <div className="text-xs text-[var(--text-muted)]">Volume</div>
-              <div className="text-lg font-semibold">{formatCurrency(String(displayVolume))}</div>
+          <div className="glass-card p-3 sm:p-4 flex items-center gap-2 sm:gap-3">
+            <DollarSign className="w-4 sm:w-5 h-4 sm:h-5 text-emerald-600 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-xs text-[var(--text-muted)]">Volume</div>
+              <div className="text-base sm:text-lg font-semibold truncate">{formatCurrency(String(displayVolume))}</div>
             </div>
           </div>
-          <div className="glass-card p-4 flex items-center gap-3">
-            <FileText className="w-5 h-5 text-[var(--accent)]" />
-            <div>
-              <div className="text-xs text-[var(--text-muted)]">Showing</div>
-              <div className="text-lg font-semibold">
+          <div className="glass-card p-3 sm:p-4 flex items-center gap-2 sm:gap-3">
+            <FileText className="w-4 sm:w-5 h-4 sm:h-5 text-[var(--accent)] shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-xs text-[var(--text-muted)]">Showing</div>
+              <div className="text-base sm:text-lg font-semibold truncate">
                 {aiRows !== null ? displayRows.length : `${page * pageSize + 1}-${Math.min((page + 1) * pageSize, displayTotal)}`}
               </div>
             </div>
           </div>
-          <div className="glass-card p-4 flex items-center gap-3">
-            <DollarSign className="w-5 h-5 text-emerald-600" />
-            <div>
-              <div className="text-xs text-[var(--text-muted)]">Page</div>
-              <div className="text-lg font-semibold">{aiRows !== null ? "AI" : `${page + 1} of ${totalPages || 1}`}</div>
+          <div className="glass-card p-3 sm:p-4 flex items-center gap-2 sm:gap-3">
+            <DollarSign className="w-4 sm:w-5 h-4 sm:h-5 text-emerald-600 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-xs text-[var(--text-muted)]">Page</div>
+              <div className="text-base sm:text-lg font-semibold truncate">{aiRows !== null ? "AI" : `${page + 1} of ${totalPages || 1}`}</div>
             </div>
           </div>
         </div>
 
         {/* Always-visible Filters */}
         <div className="glass-card p-3 mb-4">
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Milestone</label>
-              <select value={milestoneFilter} onChange={handleFilterChange(setMilestoneFilter)} className={selectClass}>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">Milestone</label>
+              <select value={milestoneFilter} onChange={handleFilterChange(setMilestoneFilter)} className={`${selectClass} w-full`}>
                 <option value="">All</option>
                 {filterOptions.milestones.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
-            <div className="w-px h-6 bg-[var(--border)]" />
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">LO</label>
-              <select value={loFilter} onChange={handleFilterChange(setLoFilter)} className={selectClass}>
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">LO</label>
+              <select value={loFilter} onChange={handleFilterChange(setLoFilter)} className={`${selectClass} w-full`}>
                 <option value="">All</option>
                 {filterOptions.los.map((lo) => <option key={lo} value={lo}>{lo}</option>)}
               </select>
             </div>
-            <div className="w-px h-6 bg-[var(--border)]" />
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">State</label>
-              <select value={stateFilter} onChange={handleFilterChange(setStateFilter)} className={selectClass}>
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">State</label>
+              <select value={stateFilter} onChange={handleFilterChange(setStateFilter)} className={`${selectClass} w-full`}>
                 <option value="">All</option>
                 {filterOptions.states.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-            <div className="w-px h-6 bg-[var(--border)]" />
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Purpose</label>
-              <select value={purposeFilter} onChange={handleFilterChange(setPurposeFilter)} className={selectClass}>
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">Purpose</label>
+              <select value={purposeFilter} onChange={handleFilterChange(setPurposeFilter)} className={`${selectClass} w-full`}>
                 <option value="">All</option>
                 {filterOptions.purposes.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
-            <div className="w-px h-6 bg-[var(--border)]" />
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Lock</label>
-              <select value={lockFilter} onChange={handleFilterChange(setLockFilter)} className={selectClass}>
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">Lock</label>
+              <select value={lockFilter} onChange={handleFilterChange(setLockFilter)} className={`${selectClass} w-full`}>
                 <option value="">All</option>
                 {filterOptions.locks.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
-            <div className="w-px h-6 bg-[var(--border)]" />
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Program</label>
-              <select value={programFilter} onChange={handleFilterChange(setProgramFilter)} className={selectClass}>
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">Program</label>
+              <select value={programFilter} onChange={handleFilterChange(setProgramFilter)} className={`${selectClass} w-full`}>
                 <option value="">All</option>
                 {filterOptions.programs.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
-            <div className="w-px h-6 bg-[var(--border)]" />
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Amount</label>
-              <input type="number" value={amountMin} onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} placeholder="Min" className={`${selectClass} w-24`} />
-              <span className="text-xs text-[var(--text-muted)]">-</span>
-              <input type="number" value={amountMax} onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} placeholder="Max" className={`${selectClass} w-24`} />
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">Amount</label>
+              <div className="flex items-center gap-1">
+                <input type="number" value={amountMin} onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} placeholder="Min" className={`${selectClass} w-full`} />
+                <span className="text-[10px] text-[var(--text-muted)]">-</span>
+                <input type="number" value={amountMax} onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} placeholder="Max" className={`${selectClass} w-full`} />
+              </div>
             </div>
-            <div className="w-px h-6 bg-[var(--border)]" />
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Rate %</label>
-              <input type="number" step="0.125" value={rateMin} onChange={(e) => { setRateMin(e.target.value); setPage(0); }} placeholder="Min" className={`${selectClass} w-20`} />
-              <span className="text-xs text-[var(--text-muted)]">-</span>
-              <input type="number" step="0.125" value={rateMax} onChange={(e) => { setRateMax(e.target.value); setPage(0); }} placeholder="Max" className={`${selectClass} w-20`} />
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">Rate %</label>
+              <div className="flex items-center gap-1">
+                <input type="number" step="0.125" value={rateMin} onChange={(e) => { setRateMin(e.target.value); setPage(0); }} placeholder="Min" className={`${selectClass} w-full`} />
+                <span className="text-[10px] text-[var(--text-muted)]">-</span>
+                <input type="number" step="0.125" value={rateMax} onChange={(e) => { setRateMax(e.target.value); setPage(0); }} placeholder="Max" className={`${selectClass} w-full`} />
+              </div>
             </div>
-            <div className="w-px h-6 bg-[var(--border)]" />
-            <div className="flex items-center gap-1.5">
-              <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">Date</label>
-              <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(0); }} className={`${selectClass} w-32`} />
-              <span className="text-xs text-[var(--text-muted)]">-</span>
-              <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(0); }} className={`${selectClass} w-32`} />
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">Date From</label>
+              <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(0); }} className={`${selectClass} w-full`} />
             </div>
-            {activeFilterCount > 0 && (
-              <>
-                <div className="w-px h-6 bg-[var(--border)]" />
-                <button
-                  onClick={() => { setMilestoneFilter(""); setLoFilter(""); setLockFilter(""); setStateFilter(""); setPurposeFilter(""); setProgramFilter(""); setAmountMin(""); setAmountMax(""); setRateMin(""); setRateMax(""); setDateFrom(""); setDateTo(""); setPage(0); }}
-                  className="text-xs text-[var(--accent)] hover:underline whitespace-nowrap"
-                >
-                  Clear all ({activeFilterCount})
-                </button>
-              </>
-            )}
+            <div>
+              <label className="text-[10px] text-[var(--text-muted)] mb-0.5 block">Date To</label>
+              <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(0); }} className={`${selectClass} w-full`} />
+            </div>
           </div>
+          {activeFilterCount > 0 && (
+            <div className="mt-2 pt-2 border-t border-[var(--border)]">
+              <button
+                onClick={() => { setMilestoneFilter(""); setLoFilter(""); setLockFilter(""); setStateFilter(""); setPurposeFilter(""); setProgramFilter(""); setAmountMin(""); setAmountMax(""); setRateMin(""); setRateMax(""); setDateFrom(""); setDateTo(""); setPage(0); }}
+                className="text-xs text-[var(--accent)] hover:underline"
+              >
+                Clear all filters ({activeFilterCount})
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Error */}
@@ -515,7 +514,7 @@ export default function PipelinePage() {
         {/* Table */}
         {(!(loading || aiLoading) || displayRows.length > 0) && (
           <div className="glass-card overflow-hidden">
-            <div className="overflow-x-auto max-h-[calc(100vh-420px)]">
+            <div className="overflow-x-auto max-h-[calc(100vh-300px)] sm:max-h-[calc(100vh-420px)]">
               <table className="data-table">
                 <thead>
                   <tr>
@@ -596,18 +595,18 @@ export default function PipelinePage() {
         )}
 
         {/* Pagination */}
-        <div className="flex items-center justify-between mt-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mt-4">
           <p className="text-xs text-[var(--text-muted)]">
             {aiRows !== null
               ? `Showing ${displayRows.length} AI results`
               : `Showing ${page * pageSize + 1}-${Math.min((page + 1) * pageSize, displayTotal)} of ${displayTotal.toLocaleString()} loans`}
           </p>
           {aiRows === null && (
-            <div className="flex gap-2">
-              <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[var(--border)] rounded-lg text-xs hover:bg-[var(--bg-secondary)] disabled:opacity-30">
+            <div className="flex gap-2 w-full sm:w-auto">
+              <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-[var(--border)] rounded-lg text-xs hover:bg-[var(--bg-secondary)] disabled:opacity-30">
                 <ChevronLeft className="w-3 h-3" /> Prev
               </button>
-              <button onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages - 1} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-[var(--border)] rounded-lg text-xs hover:bg-[var(--bg-secondary)] disabled:opacity-30">
+              <button onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages - 1} className="flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-[var(--border)] rounded-lg text-xs hover:bg-[var(--bg-secondary)] disabled:opacity-30">
                 Next <ChevronRight className="w-3 h-3" />
               </button>
             </div>

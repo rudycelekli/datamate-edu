@@ -674,49 +674,49 @@ export default function IntelligencePage() {
         </div>
 
         {/* KPI Cards */}
-        <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-4 sm:mb-6 transition-opacity duration-200 ${refreshing ? "opacity-50" : ""}`}>
-          <div className="glass-card p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <FileText className="w-4 h-4 text-[var(--accent)]" />
-              <span className="text-xs text-[var(--text-muted)]">Pipeline Units</span>
+        <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-4 mb-4 sm:mb-6 transition-opacity duration-200 ${refreshing ? "opacity-50" : ""}`}>
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 sm:gap-2 mb-1">
+              <FileText className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-[var(--accent)]" />
+              <span className="text-[10px] sm:text-xs text-[var(--text-muted)]">Pipeline Units</span>
             </div>
-            <div className="text-2xl font-bold">{stats.totalUnits.toLocaleString()}</div>
+            <div className="text-xl sm:text-2xl font-bold">{stats.totalUnits.toLocaleString()}</div>
           </div>
-          <div className="glass-card p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <DollarSign className="w-4 h-4 text-emerald-600" />
-              <span className="text-xs text-[var(--text-muted)]">Pipeline Volume</span>
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 sm:gap-2 mb-1">
+              <DollarSign className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-emerald-600" />
+              <span className="text-[10px] sm:text-xs text-[var(--text-muted)]">Pipeline Volume</span>
             </div>
-            <div className="text-2xl font-bold">{fmtCurrencyShort(stats.totalVolume)}</div>
+            <div className="text-xl sm:text-2xl font-bold">{fmtCurrencyShort(stats.totalVolume)}</div>
           </div>
-          <div className="glass-card p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <TrendingUp className="w-4 h-4 text-blue-600" />
-              <span className="text-xs text-[var(--text-muted)]">Avg Rate</span>
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 sm:gap-2 mb-1">
+              <TrendingUp className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-blue-600" />
+              <span className="text-[10px] sm:text-xs text-[var(--text-muted)]">Avg Rate</span>
             </div>
-            <div className="text-2xl font-bold">{stats.avgRate}%</div>
+            <div className="text-xl sm:text-2xl font-bold">{stats.avgRate}%</div>
           </div>
-          <div className="glass-card p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <MapPin className="w-4 h-4 text-purple-600" />
-              <span className="text-xs text-[var(--text-muted)]">Top State</span>
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 sm:gap-2 mb-1">
+              <MapPin className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-purple-600" />
+              <span className="text-[10px] sm:text-xs text-[var(--text-muted)]">Top State</span>
             </div>
-            <div className="text-2xl font-bold">{stats.topState}</div>
-            <div className="text-xs text-[var(--text-muted)]">{stats.topStatePercent}% of volume</div>
+            <div className="text-xl sm:text-2xl font-bold">{stats.topState}</div>
+            <div className="text-[10px] sm:text-xs text-[var(--text-muted)]">{stats.topStatePercent}% of volume</div>
           </div>
-          <div className="glass-card p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Users className="w-4 h-4 text-indigo-600" />
-              <span className="text-xs text-[var(--text-muted)]">Purchase %</span>
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 sm:gap-2 mb-1">
+              <Users className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-indigo-600" />
+              <span className="text-[10px] sm:text-xs text-[var(--text-muted)]">Purchase %</span>
             </div>
-            <div className="text-2xl font-bold">{stats.purchasePercent}%</div>
+            <div className="text-xl sm:text-2xl font-bold">{stats.purchasePercent}%</div>
           </div>
-          <div className="glass-card p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Clock className="w-4 h-4 text-amber-600" />
-              <span className="text-xs text-[var(--text-muted)]">Avg Loan</span>
+          <div className="glass-card p-3 sm:p-4">
+            <div className="flex items-center gap-1.5 sm:gap-2 mb-1">
+              <Clock className="w-3.5 sm:w-4 h-3.5 sm:h-4 text-amber-600" />
+              <span className="text-[10px] sm:text-xs text-[var(--text-muted)]">Avg Loan</span>
             </div>
-            <div className="text-2xl font-bold">{stats.totalUnits ? fmtCurrencyShort(stats.totalVolume / stats.totalUnits) : "--"}</div>
+            <div className="text-xl sm:text-2xl font-bold">{stats.totalUnits ? fmtCurrencyShort(stats.totalVolume / stats.totalUnits) : "--"}</div>
           </div>
         </div>
 

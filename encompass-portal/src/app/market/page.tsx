@@ -355,7 +355,7 @@ export default function MarketPage() {
         )}
 
         {/* ═══════ MARKET PULSE ═══════ */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-3 mb-5">
           <PulseCard label="30-Year Fixed" value={fmtRate(r30current)} change={r30change} unit="%" direction={r30change && r30change > 0 ? "up" : r30change && r30change < 0 ? "down" : "flat"} loading={ratesLoading} icon={<DollarSign className="w-4 h-4" />} color="text-[var(--accent)]" />
           <PulseCard label="15-Year Fixed" value={fmtRate(r15current)} change={r15change} unit="%" direction={r15change && r15change > 0 ? "up" : r15change && r15change < 0 ? "down" : "flat"} loading={ratesLoading} icon={<DollarSign className="w-4 h-4" />} color="text-blue-600" />
           <PulseCard label="10Y Treasury" value={fmtRate(treasuryRates.length > 0 ? treasuryRates[treasuryRates.length - 1].yr10 : undefined)} change={treasuryRates.length >= 2 ? +((treasuryRates[treasuryRates.length - 1].yr10 ?? 0) - (treasuryRates[treasuryRates.length - 2].yr10 ?? 0)).toFixed(2) : null} unit="%" loading={ratesLoading} icon={<BarChart3 className="w-4 h-4" />} color="text-red-600" />
@@ -381,7 +381,7 @@ export default function MarketPage() {
         {(productRates.conforming || productRates.fha || productRates.va || productRates.jumbo) && (
           <Section id="product-rates" title="Today's Product Rates (Daily)" icon={<DollarSign className="w-4 h-4 text-emerald-600" />}>
             <div className="glass-card p-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 mb-3">
                 {[
                   { label: "Conforming", data: productRates.conforming, color: "text-blue-600" },
                   { label: "FHA", data: productRates.fha, color: "text-emerald-600" },
@@ -423,20 +423,20 @@ export default function MarketPage() {
         {/* ═══════ RATE LOCK ADVISOR ═══════ */}
         {lockAdvisor && (
           <Section id="lock-advisor" title="Rate Lock Advisor" icon={<Shield className="w-4 h-4 text-[var(--accent)]" />}>
-            <div className={`glass-card p-5 ${lockAdvisor.signal === "lock" ? "border-l-4 border-red-400 bg-red-50/30" : lockAdvisor.signal === "float" ? "border-l-4 border-emerald-400 bg-emerald-50/30" : "border-l-4 border-gray-300"}`}>
-              <div className="flex items-start gap-4">
-                <div className={`w-16 h-16 rounded-xl flex items-center justify-center ${lockAdvisor.signal === "lock" ? "bg-red-100" : lockAdvisor.signal === "float" ? "bg-emerald-100" : "bg-gray-100"}`}>
-                  {lockAdvisor.signal === "lock" ? <Lock className="w-8 h-8 text-red-600" /> : lockAdvisor.signal === "float" ? <Unlock className="w-8 h-8 text-emerald-600" /> : <Minus className="w-8 h-8 text-gray-500" />}
+            <div className={`glass-card p-4 sm:p-5 ${lockAdvisor.signal === "lock" ? "border-l-4 border-red-400 bg-red-50/30" : lockAdvisor.signal === "float" ? "border-l-4 border-emerald-400 bg-emerald-50/30" : "border-l-4 border-gray-300"}`}>
+              <div className="flex flex-col sm:flex-row items-start gap-3 sm:gap-4">
+                <div className={`w-12 h-12 sm:w-16 sm:h-16 rounded-xl flex items-center justify-center shrink-0 ${lockAdvisor.signal === "lock" ? "bg-red-100" : lockAdvisor.signal === "float" ? "bg-emerald-100" : "bg-gray-100"}`}>
+                  {lockAdvisor.signal === "lock" ? <Lock className="w-6 h-6 sm:w-8 sm:h-8 text-red-600" /> : lockAdvisor.signal === "float" ? <Unlock className="w-6 h-6 sm:w-8 sm:h-8 text-emerald-600" /> : <Minus className="w-6 h-6 sm:w-8 sm:h-8 text-gray-500" />}
                 </div>
-                <div className="flex-1">
-                  <h4 className={`text-xl font-bold ${lockAdvisor.signal === "lock" ? "text-red-700" : lockAdvisor.signal === "float" ? "text-emerald-700" : "text-gray-600"}`}>
-                    Recommendation: {lockAdvisor.signal === "lock" ? "LOCK NOW" : lockAdvisor.signal === "float" ? "CONSIDER FLOATING" : "NEUTRAL — Default to Lock"}
+                <div className="flex-1 min-w-0">
+                  <h4 className={`text-lg sm:text-xl font-bold ${lockAdvisor.signal === "lock" ? "text-red-700" : lockAdvisor.signal === "float" ? "text-emerald-700" : "text-gray-600"}`}>
+                    {lockAdvisor.signal === "lock" ? "LOCK NOW" : lockAdvisor.signal === "float" ? "CONSIDER FLOATING" : "NEUTRAL — Default to Lock"}
                   </h4>
-                  <p className="text-sm text-[var(--text)] mt-1">{lockAdvisor.reason}</p>
-                  <div className="flex items-center gap-4 mt-3 text-xs text-[var(--text-muted)]">
-                    <span>10Y Treasury 5-day: <strong className={lockAdvisor.treasuryTrend > 0 ? "text-red-600" : lockAdvisor.treasuryTrend < 0 ? "text-emerald-600" : ""}>{lockAdvisor.treasuryTrend > 0 ? "+" : ""}{lockAdvisor.treasuryTrend} bps</strong></span>
-                    {rateAnalysis.currentSpread && <span>Mortgage-10Y Spread: <strong>{rateAnalysis.currentSpread}%</strong> (avg {rateAnalysis.avgSpread}%)</span>}
-                    {rateAnalysis.yearHigh && <span>52-wk range: {rateAnalysis.yearLow?.toFixed(2)}% — {rateAnalysis.yearHigh?.toFixed(2)}%</span>}
+                  <p className="text-xs sm:text-sm text-[var(--text)] mt-1">{lockAdvisor.reason}</p>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 mt-3 text-[10px] sm:text-xs text-[var(--text-muted)]">
+                    <span>10Y 5-day: <strong className={lockAdvisor.treasuryTrend > 0 ? "text-red-600" : lockAdvisor.treasuryTrend < 0 ? "text-emerald-600" : ""}>{lockAdvisor.treasuryTrend > 0 ? "+" : ""}{lockAdvisor.treasuryTrend} bps</strong></span>
+                    {rateAnalysis.currentSpread && <span>Spread: <strong>{rateAnalysis.currentSpread}%</strong> (avg {rateAnalysis.avgSpread}%)</span>}
+                    {rateAnalysis.yearHigh && <span>52-wk: {rateAnalysis.yearLow?.toFixed(2)}% — {rateAnalysis.yearHigh?.toFixed(2)}%</span>}
                   </div>
                 </div>
               </div>
@@ -449,7 +449,7 @@ export default function MarketPage() {
           <Section id="affordability" title="Affordability Impact Calculator" icon={<DollarSign className="w-4 h-4 text-emerald-600" />}>
             <div className="glass-card p-4">
               <p className="text-[10px] text-[var(--text-muted)] mb-3">Monthly P&I at today&apos;s {r30current?.toFixed(2)}% rate. Shows impact of +/- 0.25% rate change.</p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
                 {affordability.map(a => (
                   <div key={a.loan} className="p-3 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border)]">
                     <div className="text-[10px] font-medium text-[var(--text-muted)]">{fmtCurrency(a.loan)} loan</div>
@@ -587,7 +587,7 @@ export default function MarketPage() {
 
         {/* ═══════ ECONOMIC DASHBOARD ═══════ */}
         <Section id="economic" title="Economic Dashboard" icon={<Activity className="w-4 h-4 text-blue-600" />}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
             {economic.map((ind) => (
               <EconCard key={ind.name} indicator={ind} loading={ratesLoading} />
             ))}
@@ -598,7 +598,7 @@ export default function MarketPage() {
         {stateBreakdown && stateBreakdown.length > 0 && (
           <Section id="exposure" title="Your Pipeline Exposure" icon={<MapPin className="w-4 h-4 text-amber-600" />} defaultOpen={false}>
             <div className="glass-card p-4">
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
                 {stateBreakdown.slice(0, 10).map(s => (
                   <div key={s.state} className="p-3 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border)]">
                     <div className="flex items-center justify-between mb-1">
@@ -699,11 +699,11 @@ function PulseCard({ label, value, change, unit, direction, loading, icon, color
   icon: React.ReactNode; color: string;
 }) {
   return (
-    <div className="glass-card p-3">
-      <div className={`text-[10px] text-[var(--text-muted)] font-medium mb-1 flex items-center gap-1 ${color}`}>{icon}{label}</div>
+    <div className="glass-card p-2.5 sm:p-3">
+      <div className={`text-[9px] sm:text-[10px] text-[var(--text-muted)] font-medium mb-1 flex items-center gap-1 ${color}`}>{icon}<span className="truncate">{label}</span></div>
       {loading ? <div className="h-6 skeleton w-16" /> : (
         <>
-          <div className="text-lg font-bold text-[var(--text)]">{value}</div>
+          <div className="text-base sm:text-lg font-bold text-[var(--text)]">{value}</div>
           {change !== null && change !== undefined && (
             <span className={`flex items-center text-[10px] font-medium ${direction === "up" ? "text-red-600" : direction === "down" ? "text-emerald-600" : "text-gray-400"}`}>
               {direction === "up" ? <ArrowUpRight className="w-3 h-3" /> : direction === "down" ? <ArrowDownRight className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
@@ -731,11 +731,11 @@ function EconCard({ indicator, loading }: { indicator: EconIndicator; loading: b
   };
 
   return (
-    <div className="glass-card p-3">
+    <div className="glass-card p-2.5 sm:p-3">
       <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-1.5">
-          {iconMap[indicator.name] || <Activity className="w-3.5 h-3.5" />}
-          <span className="text-[10px] font-semibold text-[var(--text)]">{indicator.name}</span>
+        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
+          {iconMap[indicator.name] || <Activity className="w-3.5 h-3.5 shrink-0" />}
+          <span className="text-[9px] sm:text-[10px] font-semibold text-[var(--text)] truncate">{indicator.name}</span>
         </div>
         <span className={`flex items-center gap-0.5 text-[10px] font-medium ${indicator.direction === "up" ? "text-red-500" : indicator.direction === "down" ? "text-emerald-500" : "text-gray-400"}`}>
           {indicator.direction === "up" ? <ArrowUpRight className="w-3 h-3" /> : indicator.direction === "down" ? <ArrowDownRight className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
