@@ -223,6 +223,7 @@ export default function PipelinePage() {
     import("@/lib/supabase").then(({ createBrowserClient }) => {
       try {
         const client = createBrowserClient();
+        if (!client) return;
         const channel = client
           .channel("pipeline-changes")
           .on("postgres_changes", { event: "*", schema: "public", table: "pipeline_loans" }, () => {
