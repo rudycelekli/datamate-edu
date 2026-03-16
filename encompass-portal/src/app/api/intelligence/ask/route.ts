@@ -111,17 +111,66 @@ SQL Rules:
 
 Chart types: horizontal-bar for rankings, pie for distributions (<8 categories), line for time series, stacked-bar/multi-line for two-dimensional.
 
-Example queries:
-- "Which LOs have the most volume?" → SELECT loan_officer AS name, SUM(loan_amount) AS value, COUNT(*) AS units FROM pipeline_loans WHERE loan_officer != '' GROUP BY loan_officer ORDER BY value DESC LIMIT 15
-- "Average rate by program type" → Use program grouping CASE, AVG(note_rate), WHERE note_rate > 0
-- "Pipeline by folder" → GROUP BY loan_folder
-- "Loans closing this month" → WHERE closing_date != '' AND closing_date >= '2026-03-01' AND closing_date < '2026-04-01'
-- "Expiring locks" → WHERE lock_status = 'Locked' AND lock_expiration != '' AND lock_expiration::date <= CURRENT_DATE + INTERVAL '7 days'
-- "Average days to close" → AVG(DATE_PART('day', closing_date::timestamp - date_created::timestamp)) WHERE closing_date != ''
-- "Year over year % change of volume in NC" → Use a subquery with LAG:
-  SELECT year AS name, volume, ROUND(((volume - prev) / NULLIF(prev, 0)) * 100, 1) AS value FROM (SELECT EXTRACT(YEAR FROM date_created::date)::int AS year, SUM(loan_amount) AS volume, LAG(SUM(loan_amount)) OVER (ORDER BY EXTRACT(YEAR FROM date_created::date)::int) AS prev FROM pipeline_loans WHERE property_state = 'NC' AND date_created != '' GROUP BY year) sub WHERE prev IS NOT NULL ORDER BY year
-  chartConfig: { type: "bar", nameKey: "name", dataKey: "value", formatValue: "percent" } — NOT pivotBy, NOT byYearState
-- IMPORTANT: When user asks about a SINGLE state/LO/dimension (e.g. "volume in NC by year"), filter with WHERE, do NOT pivot by that dimension. Only use pivotBy when they want to compare ACROSS dimensions (e.g. "by year color-coded by state").`;
+IMPORTANT RULES:
+- When user asks about a SINGLE state/LO/dimension (e.g. "volume in NC by year"), filter with WHERE, do NOT pivot.
+- Only use pivotBy when they want to compare ACROSS dimensions (e.g. "by year color-coded by state").
+- For "% change" or "growth rate", use LAG window function, exclude first row (WHERE prev IS NOT NULL).
+- For "market share" or "percentage of total", use SUM(x) * 100.0 / SUM(SUM(x)) OVER() AS value with formatValue: "percent".
+- For "cumulative" or "running total", use SUM(x) OVER (ORDER BY ...) as a window function.
+
+Example queries (STUDY THESE — they cover all major patterns):
+
+## Rankings & Comparisons
+- "Top LOs by volume" → SELECT loan_officer AS name, SUM(loan_amount) AS value, COUNT(*) AS units FROM pipeline_loans WHERE loan_officer != '' GROUP BY loan_officer ORDER BY value DESC LIMIT 15 → horizontal-bar, currency
+- "Bottom 5 states by count" → ... ORDER BY units ASC LIMIT 5 → horizontal-bar, number
+- "LO performance comparison" → Include AVG(loan_amount) AS avg_amount, units, value → horizontal-bar
+- "Which processor handles the most loans?" → GROUP BY loan_processor, ORDER BY units DESC LIMIT 10
+
+## Distributions & Breakdowns
+- "Rate distribution" → CASE buckets (<5%, 5-5.5%, etc.), COUNT(*) → bar, number
+- "Loan amount distribution" → CASE WHEN loan_amount < 200000 THEN 'Under $200K' WHEN loan_amount < 400000 THEN '$200K-$400K' WHEN loan_amount < 600000 THEN '$400K-$600K' WHEN loan_amount < 800000 THEN '$600K-$800K' WHEN loan_amount < 1000000 THEN '$800K-$1M' ELSE 'Over $1M' END AS name → bar
+- "Program mix" / "Purpose breakdown" / "Lock status" → GROUP BY, COUNT/SUM → pie (if <8 categories)
+- "FHA vs Conventional vs VA market share" → Use program grouping CASE, SUM * 100.0 / SUM OVER() → pie, percent
+
+## Time Series & Trends
+- "Monthly volume trend" → TO_CHAR(date_created::date, 'YYYY-MM') AS name, SUM(loan_amount) AS value → line, currency, ORDER BY name ASC
+- "Quarterly production" → 'Q' || EXTRACT(QUARTER) || ' ' || EXTRACT(YEAR) → bar, currency
+- "Volume by year" → EXTRACT(YEAR FROM date_created::date)::int → bar, currency, ASC
+- "Weekly closings" → TO_CHAR(closing_date::date, 'IYYY-IW') AS name, WHERE closing_date != '' → line
+
+## Year-over-Year & Growth
+- "YoY % change of volume in NC" → Use LAG window:
+  SELECT year AS name, volume, ROUND(((volume - prev) / NULLIF(prev, 0)) * 100, 1) AS value FROM (SELECT EXTRACT(YEAR FROM date_created::date)::int AS year, SUM(loan_amount) AS volume, LAG(SUM(loan_amount)) OVER (ORDER BY EXTRACT(YEAR FROM date_created::date)::int) AS prev FROM pipeline_loans WHERE property_state = 'NC' AND date_created != '' GROUP BY year) sub WHERE prev IS NOT NULL ORDER BY year → bar, percent
+- "MoM growth" → Same pattern with TO_CHAR month and LAG
+
+## Computed Metrics
+- "Average days to close" → SELECT AVG(DATE_PART('day', closing_date::timestamp - date_created::timestamp))::int AS value, 'Average' AS name FROM pipeline_loans WHERE closing_date != '' AND date_created != ''
+- "Average days to close by program" → Same with GROUP BY program grouping CASE
+- "Average loan size by state" → AVG(loan_amount) AS value, property_state AS name → horizontal-bar, currency
+- "Median rate by year" → PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY note_rate) AS value WHERE note_rate > 0
+- "Largest single loan" → SELECT loan_number AS name, loan_amount AS value, loan_officer, property_state FROM pipeline_loans ORDER BY loan_amount DESC LIMIT 1
+
+## Pipeline Health & Operations
+- "Expiring locks this week" → WHERE lock_status = 'Locked' AND lock_expiration != '' AND lock_expiration::date <= CURRENT_DATE + INTERVAL '7 days'
+- "Pipeline by folder" → GROUP BY loan_folder, SUM(loan_amount) → pie
+- "Stale loans (not modified in 30+ days)" → WHERE last_modified != '' AND last_modified::date < CURRENT_DATE - INTERVAL '30 days'
+- "Loans in processing over 45 days" → WHERE milestone = 'Processing' AND date_created != '' AND DATE_PART('day', NOW() - date_created::timestamp) > 45
+- "Turn time by milestone" → SELECT milestone AS name, AVG(DATE_PART('day', ...))::int AS value → horizontal-bar
+
+## Two-Dimensional (Pivot) Charts
+- "Volume by year color-coded by state" → SELECT year, state, SUM → flat rows with pivotBy: "state" → stacked-bar
+- "Production by quarter by program type" → pivotBy: "program_group" → stacked-bar or multi-line
+- "Monthly trend by LO (top 5)" → pivotBy: "loan_officer" → multi-line
+
+## Closing & Dates
+- "Loans closing this month" → WHERE closing_date != '' AND closing_date >= '${new Date().toISOString().slice(0, 8)}01' AND closing_date < '${(() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d.toISOString().slice(0, 8); })()}01'
+- "Closings by month this year" → WHERE closing_date != '' AND closing_date >= '${new Date().getFullYear()}-01-01', GROUP BY month
+- "Funded loans last 30 days" → WHERE milestone IN ('Funding','Purchased') AND last_modified::date >= CURRENT_DATE - INTERVAL '30 days'
+
+## Single Aggregates
+- "Total pipeline volume" → SELECT SUM(loan_amount) AS value, COUNT(*) AS units, 'Total Pipeline' AS name → type: "table"
+- "How many loans in processing?" → SELECT COUNT(*) AS value, 'Processing' AS name WHERE milestone = 'Processing'
+- "What is the average rate?" → SELECT ROUND(AVG(note_rate)::numeric, 3) AS value, 'Avg Rate' AS name WHERE note_rate > 0`;
 }
 
 function validateSQL(sql: string): boolean {
