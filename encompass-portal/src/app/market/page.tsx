@@ -103,8 +103,9 @@ function fmtCurrency(v: number) {
 function fmtEconValue(v: number, name: string) {
   if (name.includes("Rate") || name.includes("Unemployment") || name.includes("Savings")) return `${v.toFixed(2)}%`;
   if (name.includes("Price")) return fmtCurrency(v);
-  if (name.includes("CPI") || name.includes("Case-Shiller") || name.includes("Sentiment")) return v.toFixed(1);
+  if (name.includes("CPI") || name.includes("Case-Shiller") || name.includes("Sentiment") || name.includes("Affordability")) return v.toFixed(1);
   if (name.includes("Starts") || name.includes("Sales")) return `${v.toFixed(0)}K`;
+  if (name.includes("Months of Supply")) return `${v.toFixed(1)} mo`;
   return v.toFixed(2);
 }
 
@@ -158,6 +159,8 @@ export default function MarketPage() {
   const [economic, setEconomic] = useState<EconIndicator[]>([]);
   const [inflationRate, setInflationRate] = useState<number | null>(null);
   const [lockAdvisor, setLockAdvisor] = useState<LockAdvisor | null>(null);
+  const [productRates, setProductRates] = useState<{ conforming?: { value: number; date: string } | null; fha?: { value: number; date: string } | null; va?: { value: number; date: string } | null; jumbo?: { value: number; date: string } | null }>({});
+  const [dailyRates, setDailyRates] = useState<{ date: string; conforming?: number; fha?: number; va?: number; jumbo?: number }[]>([]);
   const [ratesLoading, setRatesLoading] = useState(true);
   const [ratesFetchedAt, setRatesFetchedAt] = useState("");
 
@@ -200,6 +203,8 @@ export default function MarketPage() {
       setEconomic(data.economic || []);
       setInflationRate(data.inflationRate ?? null);
       setLockAdvisor(data.lockAdvisor || null);
+      setProductRates(data.productRates || {});
+      setDailyRates(data.dailyRates || []);
       setRatesFetchedAt(data.fetchedAt || "");
       setMarketCache({
         news, rates: data, newsFetchedAt, ratesFetchedAt: data.fetchedAt || "",
@@ -371,6 +376,49 @@ export default function MarketPage() {
             </div>
           )}
         </div>
+
+        {/* ═══════ TODAY'S PRODUCT RATES (Daily Optimal Blue) ═══════ */}
+        {(productRates.conforming || productRates.fha || productRates.va || productRates.jumbo) && (
+          <Section id="product-rates" title="Today's Product Rates (Daily)" icon={<DollarSign className="w-4 h-4 text-emerald-600" />}>
+            <div className="glass-card p-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                {[
+                  { label: "Conforming", data: productRates.conforming, color: "text-blue-600" },
+                  { label: "FHA", data: productRates.fha, color: "text-emerald-600" },
+                  { label: "VA", data: productRates.va, color: "text-purple-600" },
+                  { label: "Jumbo", data: productRates.jumbo, color: "text-amber-600" },
+                ].map(p => (
+                  <div key={p.label} className="p-3 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border)]">
+                    <div className={`text-[10px] font-semibold ${p.color}`}>{p.label} 30-Year</div>
+                    <div className="text-xl font-bold text-[var(--text)] mt-0.5">{p.data ? `${p.data.value.toFixed(3)}%` : "--"}</div>
+                    {p.data && <div className="text-[9px] text-[var(--text-muted)] mt-0.5">as of {fmtDate(p.data.date)}</div>}
+                  </div>
+                ))}
+              </div>
+              {dailyRates.length > 0 && (
+                <ResponsiveContainer width="100%" height={180}>
+                  <LineChart data={dailyRates.map(r => ({ ...r, label: fmtDate(r.date) }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis domain={["auto", "auto"]} tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}%`} />
+                    <Tooltip content={<MiniTooltip />} />
+                    <Line type="monotone" dataKey="conforming" name="Conforming" stroke="#2563EB" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="fha" name="FHA" stroke="#059669" strokeWidth={1.5} dot={false} />
+                    <Line type="monotone" dataKey="va" name="VA" stroke="#7C3AED" strokeWidth={1.5} dot={false} />
+                    <Line type="monotone" dataKey="jumbo" name="Jumbo" stroke="#D97706" strokeWidth={1.5} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+              <div className="flex gap-4 mt-1 text-[9px] text-[var(--text-muted)]">
+                <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#2563EB] inline-block" /> Conforming</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#059669] inline-block" /> FHA</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#7C3AED] inline-block" /> VA</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#D97706] inline-block" /> Jumbo</span>
+              </div>
+              <p className="text-[9px] text-[var(--text-muted)] mt-2">Source: Optimal Blue Mortgage Market Indices (OBMMI). Updated daily — more granular than weekly Freddie Mac PMMS.</p>
+            </div>
+          </Section>
+        )}
 
         {/* ═══════ RATE LOCK ADVISOR ═══════ */}
         {lockAdvisor && (
@@ -678,6 +726,8 @@ function EconCard({ indicator, loading }: { indicator: EconIndicator; loading: b
     "Consumer Sentiment": <Activity className="w-3.5 h-3.5 text-cyan-500" />,
     "Median Home Price": <DollarSign className="w-3.5 h-3.5 text-green-500" />,
     "Existing Home Sales": <Home className="w-3.5 h-3.5 text-indigo-500" />,
+    "Affordability Index": <Target className="w-3.5 h-3.5 text-pink-500" />,
+    "Months of Supply": <Clock className="w-3.5 h-3.5 text-slate-500" />,
   };
 
   return (

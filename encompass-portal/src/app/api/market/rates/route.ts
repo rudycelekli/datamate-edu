@@ -4,9 +4,14 @@ import { NextResponse } from "next/server";
 const FRED_BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv";
 
 const SERIES = {
-  // Mortgage rates (weekly)
+  // Mortgage rates — weekly (Freddie Mac PMMS)
   rate30yr: "MORTGAGE30US",
   rate15yr: "MORTGAGE15US",
+  // Mortgage rates — daily (Optimal Blue indices, much more granular)
+  fha30yr: "OBMMIFHA30YF",         // FHA 30-Year Fixed (daily)
+  va30yr: "OBMMIVA30YF",           // VA 30-Year Fixed (daily)
+  jumbo30yr: "OBMMIJUMBO30YF",     // Jumbo 30-Year Fixed (daily)
+  conforming30yr: "OBMMIC30YF",    // Conforming 30-Year Fixed (daily)
   // Treasury yields (daily)
   yr2: "DGS2",
   yr5: "DGS5",
@@ -21,10 +26,9 @@ const SERIES = {
   consumerSentiment: "UMCSENT", // U of Michigan Consumer Sentiment (monthly)
   medianPrice: "MSPUS",        // Median Sales Price of Houses Sold (quarterly)
   spread10y2y: "T10Y2Y",       // 10Y-2Y Treasury Spread (daily)
-  personalSavings: "PSAVERT",  // Personal Savings Rate (monthly)
+  affordability: "FIXHAI",     // Housing Affordability Index (monthly, NAR)
   existingHomeSales: "EXHOSLUSM495S", // Existing Home Sales (monthly)
-  newHomeSales: "HSN1F",       // New Home Sales (monthly, thousands)
-  mortgageApps: "MBAVPREALAPPW", // MBA Mortgage Applications (weekly, may be discontinued)
+  monthsSupply: "MSACSR",     // Monthly Supply of New Houses (months)
 };
 
 // Start date for rate/treasury data (1 year)
@@ -106,6 +110,8 @@ export async function GET() {
       fedFunds, cpi, unemployment, housingStarts,
       caseShiller, consumerSentiment, medianPrice,
       spread10y2y, existingHomeSales,
+      fha30, va30, jumbo30, conforming30,
+      affordability, monthsSupply,
     ] = await Promise.all([
       fetchFredSeries(SERIES.rate30yr),
       fetchFredSeries(SERIES.rate15yr),
@@ -122,15 +128,41 @@ export async function GET() {
       fetchFredSeries(SERIES.medianPrice, econStart),
       fetchFredSeries(SERIES.spread10y2y),
       fetchFredSeries(SERIES.existingHomeSales, econStart),
+      // Daily Optimal Blue indices (much more granular than weekly PMMS)
+      fetchFredSeries(SERIES.fha30yr),
+      fetchFredSeries(SERIES.va30yr),
+      fetchFredSeries(SERIES.jumbo30yr),
+      fetchFredSeries(SERIES.conforming30yr),
+      // Housing market health
+      fetchFredSeries(SERIES.affordability, econStart),
+      fetchFredSeries(SERIES.monthsSupply, econStart),
     ]);
 
-    // ─── Mortgage rates ───
+    // ─── Mortgage rates (weekly PMMS) ───
     const mortgageDates = [...m30.keys()].sort();
     const mortgage = mortgageDates.map((date) => ({
       date,
       rate30yr: m30.get(date),
       rate15yr: m15.get(date),
     }));
+
+    // ─── Daily product rates (Optimal Blue) ───
+    const dailyDates = [...conforming30.keys()].sort().slice(-90);
+    const dailyRates = dailyDates.map(date => ({
+      date,
+      conforming: conforming30.get(date),
+      fha: fha30.get(date),
+      va: va30.get(date),
+      jumbo: jumbo30.get(date),
+    }));
+
+    // Product rate snapshot (latest available)
+    const productRates = {
+      conforming: getLatest(conforming30),
+      fha: getLatest(fha30),
+      va: getLatest(va30),
+      jumbo: getLatest(jumbo30),
+    };
 
     // ─── Treasury rates ───
     const treasuryDates = [...t10.keys()].sort();
@@ -232,6 +264,10 @@ export async function GET() {
         "Median price of homes sold nationally. Key affordability metric. Compare to your pipeline's average loan size."),
       buildIndicator("Existing Home Sales", existingHomeSales, "value",
         "Annualized rate of existing home sales (millions). Indicates housing market activity and inventory turnover."),
+      buildIndicator("Affordability Index", affordability, "pts",
+        "NAR Housing Affordability Index. 100 = median family can qualify for median-priced home. Higher = more affordable. Below 100 = affordability crisis."),
+      buildIndicator("Months of Supply", monthsSupply, "value",
+        "Months to sell all current inventory at current sales pace. 4-6 months = balanced. Below 4 = seller's market. Above 6 = buyer's market."),
     ];
 
     // CPI YoY inflation rate
@@ -280,6 +316,9 @@ export async function GET() {
       economic,
       inflationRate,
       lockAdvisor: { signal: lockSignal, reason: lockReason, treasuryTrend: +(treasuryTrend * 100).toFixed(1) },
+      // Daily product-level rates from Optimal Blue
+      dailyRates,
+      productRates,
       fetchedAt: new Date().toISOString(),
     });
   } catch (err: unknown) {
