@@ -32,7 +32,7 @@
 - **Intelligence Analytics** — 8 chart sections with AI-generated insights and an interactive query bar
 - **Market Intelligence** — Live mortgage rates, economic indicators, rate lock advisor, industry news
 - **Milo AI** — An AI underwriting assistant backed by mortgage guideline PDFs (FHA, VA, Fannie Mae, Freddie Mac, USDA)
-- **Loan Detail** — 5-tab deep-dive into individual loans with documents, milestones, mapped fields, raw JSON
+- **Loan Detail** — 5-tab deep-dive into individual loans with documents, milestones, mapped fields, raw JSON, plus a collapsible **Milo AI Copilot** sidebar that provides loan-specific AI guidance
 
 **Architecture**: Next.js App Router (server components + client pages) → API routes → Supabase (PostgreSQL) + Encompass API + Anthropic Claude + FRED API + Google News RSS.
 
@@ -100,6 +100,7 @@ encompass-portal/
 │   │   └── api/                    # 19 API route files (see §9)
 │   ├── components/
 │   │   ├── AppHeader.tsx        # Shared nav header
+│   │   ├── LoanCopilot.tsx      # Milo AI copilot sidebar for loan detail page
 │   │   └── USMap.tsx            # Interactive choropleth map
 │   └── lib/
 │       ├── supabase.ts          # Supabase client factory (admin + browser)
@@ -392,7 +393,29 @@ Shared navigation header across all pages.
 - Pipeline stats: total loans + sync age from `/api/pipeline/stats`, polled every 30s
 - `rightContent` prop for page-specific header actions (e.g. filter count, refresh button)
 
-### 7.2 `USMap.tsx` (~290 lines)
+### 7.2 `LoanCopilot.tsx` (~380 lines)
+Collapsible left-side AI copilot panel for the Loan Detail page. Replicates full Milo AI functionality with loan-specific context injection.
+
+**Props**: `{ isOpen: boolean, onClose: () => void, loanContext: string }`
+
+**Features**:
+- **Fixed left panel** (420px) with slide-in/out animation (`translate-x-0` / `-translate-x-full`). State preserved while panel is hidden.
+- **Full Milo AI chat**: Streaming SSE responses from `/api/milo/chat`, same system prompt and document knowledge (FHA, VA, Fannie Mae, Freddie Mac, USDA).
+- **Dynamic loan context**: Receives `loanContext` prop — a text summary of non-PII loan data (program, amount, rate, property, dates, milestones, pricing, doc summary). Injected into the AI system prompt alongside `pipelineContext`.
+- **Citation support**: Same `【bracket notation】` parsing and clickable orange citation badges as Milo page. `SOURCE_TO_FILE` mapping resolves citations to PDF filenames.
+- **PDF side panel**: Fixed right-side overlay when a citation is clicked. Page jumping via URL fragment (`#page=N&search=term`). Uses `/api/milo/docs` to serve PDFs.
+- **Markdown renderer**: Full renderer for bold, tables, bullet/numbered lists, headers (h1-h3), code blocks, horizontal rules, and citation badges. Compact styling for sidebar width.
+- **Loan-specific starters**: 4 pre-written questions (eligibility check, red flags, document checklist, rate lock analysis) instead of Milo's generic 8 starters.
+- **Follow-up chips**: Quick-tap buttons for "Check DTI limits", "Required conditions", "Compare programs".
+- **Streaming indicator**: Pulse dot during active streaming, phase indicator for multi-batch synthesis.
+
+**Shared utilities** (duplicated from Milo page for isolation):
+- `SOURCE_TO_FILE` — 25+ citation name → PDF filename mapping
+- `resolveSourceFile(citation)` — Resolves citation text to filename with fuzzy matching
+- `parseCitationLocation(citation)` — Extracts `{ page, search }` from citation string
+- `buildPdfUrl(file, citation)` — Builds `/api/milo/docs?file=...#page=N&search=term` URL
+
+### 7.3 `USMap.tsx` (~290 lines)
 Custom SVG choropleth map of the US using TopoJSON (us-atlas).
 
 **Props**: `{ data: Record<string, { units: number; volume: number }>, selectedState?: string, onStateClick?: (state: string) => void }`
@@ -435,15 +458,29 @@ Custom SVG choropleth map of the US using TopoJSON (us-atlas).
 
 **Key state**: `rows`, `total`, `filterOptions`, `search`, `aiSearchQuery`, `aiResults`, `aiDescription`, `sortField`, `sortDir`, `page`, `filters` (12 individual filter states).
 
-### 8.2 Loan Detail Page — `loan/[loanId]/page.tsx` (~1,217 lines, route: `/loan/:id`)
+### 8.2 Loan Detail Page — `loan/[loanId]/page.tsx` (~1,290 lines, route: `/loan/:id`)
 
-**Purpose**: Deep-dive into a single loan. 5 tabs.
+**Purpose**: Deep-dive into a single loan. 5 tabs + collapsible AI copilot sidebar.
 
 **Data fetching**: Parallel fetch of 4 endpoints on mount:
 1. `GET /api/loans/{id}` → full loan JSON
 2. `GET /api/loans/{id}/fields` → mapped field values
 3. `GET /api/loans/{id}/documents` → documents + attachments
 4. `GET /api/loans/{id}/milestones` → milestone log
+
+**Milo AI Copilot**:
+- Toggle button ("Milo AI" with Sparkles icon) in the header next to Refresh
+- Opens `LoanCopilot` component as a fixed left panel (420px)
+- Main content shifts right (`ml-[420px]` with CSS transition) when copilot is open
+- `buildLoanCtx()` function extracts non-PII loan data into a text summary:
+  - Loan basics: number, amount, rate, program, purpose, lien position, LTV, file status, credit score
+  - Property: address, city, state, zip, county, occupancy
+  - Loan team: LO, processor, channel
+  - Key dates: application, closing, lock, lock expiration, CD sent, COE
+  - Pricing: note rate, buy price, corp/branch/LO margins
+  - Milestones: name + status (complete/pending)
+  - Documents: summary counts (total docs, docs with files, total attachments)
+- The `loanContext` string is passed to the copilot, which sends it to `/api/milo/chat` alongside `pipelineContext`
 
 **Tabs**:
 
@@ -657,7 +694,7 @@ Per-chart AI insight generation.
 ### 9.14 `milo/chat` — POST
 Streaming mortgage AI assistant.
 
-**Request**: `{ messages: ChatMessage[], pipelineContext?: string }`
+**Request**: `{ messages: ChatMessage[], pipelineContext?: string, loanContext?: string }`
 
 **Flow**:
 1. Route question to relevant PDFs via `routeDocsMultiBatch()`
@@ -669,6 +706,10 @@ Streaming mortgage AI assistant.
 7. Prepend `<!--DOCS:[...]-->` metadata and optional `<!--PHASE:synthesizing-->` indicator
 
 **System prompt**: 152-line comprehensive mortgage underwriting expert prompt covering FHA, VA, Conventional, USDA guidelines with citation formatting rules.
+
+**Context injection** (appended to system prompt):
+- `pipelineContext` → `## Live Pipeline Data` section (portfolio-level stats from `getPipelineSummary()`)
+- `loanContext` → `## Current Loan Context` section (individual loan non-PII data from `buildLoanCtx()`). Enables the AI to answer questions about "this loan" with specific details about the program, amount, rate, property, dates, milestones, and pricing.
 
 ### 9.15 `milo/docs` — GET
 Serves PDF files for the Milo AI side panel.
