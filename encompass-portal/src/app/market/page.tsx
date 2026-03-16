@@ -10,11 +10,12 @@ import {
   Loader2, TrendingUp, TrendingDown, Newspaper, RefreshCw, ExternalLink,
   Clock, ArrowUpRight, ArrowDownRight, Minus, MapPin, Lock, Unlock,
   AlertTriangle, Activity, DollarSign, Home, Users, BarChart3,
-  Shield, ChevronDown, ChevronUp, Zap, BookOpen, Target,
+  Shield, ChevronDown, ChevronUp, Zap, BookOpen, Target, Calendar,
 } from "lucide-react";
 import {
   getMarketCache, setMarketCache, isMarketFresh,
   getPipelineStateBreakdown, getPipelineSummary,
+  getPipelineCache, getIntelCache,
 } from "@/lib/pipeline-store";
 
 // ─── Types ───
@@ -275,6 +276,96 @@ export default function MarketPage() {
     });
   }, [r30current]);
 
+  // ─── Pipeline Rate Intelligence ───
+  const pipelineRateInsights = useMemo(() => {
+    const cache = getPipelineCache();
+    const intel = getIntelCache();
+    const rows = intel.rows || cache.data?.rows;
+    if (!rows || rows.length === 0 || !r30current) return null;
+
+    let totalRate = 0;
+    let rateCount = 0;
+    let aboveMarket = 0;
+    let belowMarket = 0;
+    let lockedCount = 0;
+    let expiringIn7Days = 0;
+    let expiringIn3Days = 0;
+    const now = Date.now();
+
+    rows.forEach(r => {
+      const f = r.fields || {};
+      const rate = parseFloat(f["Loan.NoteRatePercent"] || "0");
+      const lockStatus = f["Loan.LockStatus"] || "";
+      const lockExp = f["Loan.LockExpirationDate"] || "";
+
+      if (rate > 0) {
+        totalRate += rate;
+        rateCount++;
+        if (rate > r30current) aboveMarket++;
+        else belowMarket++;
+      }
+
+      if (lockStatus === "Locked") {
+        lockedCount++;
+        if (lockExp) {
+          const daysLeft = new Date(lockExp).getTime() - now;
+          if (daysLeft > 0 && daysLeft <= 7 * 86400000) expiringIn7Days++;
+          if (daysLeft > 0 && daysLeft <= 3 * 86400000) expiringIn3Days++;
+        }
+      }
+    });
+
+    const avgRate = rateCount > 0 ? totalRate / rateCount : null;
+    return {
+      avgRate,
+      rateCount,
+      aboveMarket,
+      belowMarket,
+      lockedCount,
+      expiringIn7Days,
+      expiringIn3Days,
+      rateDiff: avgRate !== null ? avgRate - r30current : null,
+      totalLoans: rows.length,
+    };
+  }, [r30current]);
+
+  // ─── Upcoming Rate-Moving Events ───
+  const upcomingEvents = useMemo(() => {
+    const now = new Date();
+    const events: Array<{ date: string; label: string; type: string; impact: "high" | "medium" }> = [];
+
+    // FOMC announcement dates 2025-2026
+    const fomcDates = [
+      "2025-01-29","2025-03-19","2025-05-07","2025-06-18","2025-07-30","2025-09-17","2025-10-29","2025-12-10",
+      "2026-01-28","2026-03-18","2026-04-29","2026-06-17","2026-07-29","2026-09-16","2026-10-28","2026-12-09",
+    ];
+    fomcDates.forEach(d => events.push({ date: d, label: "FOMC Rate Decision", type: "fed", impact: "high" }));
+
+    // CPI release dates 2025-2026 (approximate: ~12th of each month)
+    const cpiDates = [
+      "2025-01-15","2025-02-12","2025-03-12","2025-04-10","2025-05-13","2025-06-11",
+      "2025-07-10","2025-08-12","2025-09-10","2025-10-14","2025-11-12","2025-12-10",
+      "2026-01-14","2026-02-11","2026-03-11","2026-04-14","2026-05-12","2026-06-10",
+      "2026-07-14","2026-08-12","2026-09-16","2026-10-14","2026-11-10","2026-12-09",
+    ];
+    cpiDates.forEach(d => events.push({ date: d, label: "CPI Inflation Report", type: "inflation", impact: "high" }));
+
+    // Jobs Report (first Friday of month, approximate)
+    const jobsDates = [
+      "2025-01-10","2025-02-07","2025-03-07","2025-04-04","2025-05-02","2025-06-06",
+      "2025-07-03","2025-08-01","2025-09-05","2025-10-03","2025-11-07","2025-12-05",
+      "2026-01-09","2026-02-06","2026-03-06","2026-04-03","2026-05-01","2026-06-05",
+      "2026-07-02","2026-08-07","2026-09-04","2026-10-02","2026-11-06","2026-12-04",
+    ];
+    jobsDates.forEach(d => events.push({ date: d, label: "Nonfarm Payrolls (Jobs)", type: "employment", impact: "medium" }));
+
+    const cutoff = new Date(now.getTime() + 60 * 86400000);
+    return events
+      .filter(e => new Date(e.date + "T12:00:00") >= now && new Date(e.date + "T12:00:00") <= cutoff)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(0, 8);
+  }, []);
+
   // ─── Market Summary ───
   const marketSummary = useMemo(() => {
     if (!r30current || !lockAdvisor) return "";
@@ -444,6 +535,80 @@ export default function MarketPage() {
           </Section>
         )}
 
+        {/* ═══════ PIPELINE RATE INTELLIGENCE ═══════ */}
+        {pipelineRateInsights && (
+          <Section id="rate-intelligence" title="Your Pipeline vs Market" icon={<Target className="w-4 h-4 text-blue-600" />}>
+            <div className="glass-card p-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 mb-3">
+                <div className="p-3 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border)]">
+                  <div className="text-[10px] font-medium text-[var(--text-muted)]">Pipeline Avg Rate</div>
+                  <div className="text-xl font-bold text-[var(--text)]">{pipelineRateInsights.avgRate?.toFixed(2)}%</div>
+                  {pipelineRateInsights.rateDiff !== null && (
+                    <div className={`text-[10px] font-medium flex items-center gap-0.5 ${pipelineRateInsights.rateDiff > 0 ? "text-red-500" : "text-emerald-500"}`}>
+                      {pipelineRateInsights.rateDiff > 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                      {Math.abs(pipelineRateInsights.rateDiff).toFixed(2)}% vs market
+                    </div>
+                  )}
+                </div>
+                <div className="p-3 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border)]">
+                  <div className="text-[10px] font-medium text-[var(--text-muted)]">Above Market Rate</div>
+                  <div className="text-xl font-bold text-red-600">{pipelineRateInsights.aboveMarket}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">of {pipelineRateInsights.rateCount} with rates</div>
+                </div>
+                <div className="p-3 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border)]">
+                  <div className="text-[10px] font-medium text-[var(--text-muted)]">Locked Loans</div>
+                  <div className="text-xl font-bold text-[var(--text)]">{pipelineRateInsights.lockedCount}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">of {pipelineRateInsights.totalLoans} total</div>
+                </div>
+                <div className={`p-3 rounded-lg border ${pipelineRateInsights.expiringIn3Days > 0 ? "bg-red-50 border-red-200" : pipelineRateInsights.expiringIn7Days > 0 ? "bg-amber-50 border-amber-200" : "bg-[var(--bg-secondary)] border-[var(--border)]"}`}>
+                  <div className="text-[10px] font-medium text-[var(--text-muted)]">Locks Expiring (7d)</div>
+                  <div className={`text-xl font-bold ${pipelineRateInsights.expiringIn3Days > 0 ? "text-red-600" : pipelineRateInsights.expiringIn7Days > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                    {pipelineRateInsights.expiringIn7Days}
+                  </div>
+                  {pipelineRateInsights.expiringIn3Days > 0 ? (
+                    <div className="text-[10px] text-red-600 font-medium flex items-center gap-0.5">
+                      <AlertTriangle className="w-3 h-3" /> {pipelineRateInsights.expiringIn3Days} within 3 days
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-[var(--text-muted)]">no urgent expirations</div>
+                  )}
+                </div>
+              </div>
+              {pipelineRateInsights.avgRate && r30current && (
+                <div className="p-3 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border)]">
+                  <div className="flex items-center justify-between text-[10px] mb-2">
+                    <span className="font-medium text-[var(--text-muted)]">Rate Comparison</span>
+                    <span className="text-[var(--text-muted)]">{pipelineRateInsights.aboveMarket} above · {pipelineRateInsights.belowMarket} below market</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] mb-1">
+                    <span className="text-blue-600 font-semibold">Your Avg: {pipelineRateInsights.avgRate.toFixed(2)}%</span>
+                    <span className="text-[var(--accent)] font-semibold">Market: {r30current.toFixed(2)}%</span>
+                  </div>
+                  <div className="relative h-2 bg-gray-100 rounded-full overflow-hidden">
+                    {(() => {
+                      const min = Math.min(pipelineRateInsights.avgRate!, r30current) - 0.5;
+                      const max = Math.max(pipelineRateInsights.avgRate!, r30current) + 0.5;
+                      const range = max - min;
+                      const pipePct = ((pipelineRateInsights.avgRate! - min) / range) * 100;
+                      const mktPct = ((r30current - min) / range) * 100;
+                      return (
+                        <>
+                          <div className="absolute top-0 h-full bg-blue-200 rounded-full" style={{ left: `${Math.min(pipePct, mktPct)}%`, width: `${Math.abs(pipePct - mktPct)}%` }} />
+                          <div className="absolute top-[-2px] w-1.5 h-[calc(100%+4px)] bg-blue-600 rounded-full" style={{ left: `${pipePct}%` }} title="Pipeline avg" />
+                          <div className="absolute top-[-2px] w-1.5 h-[calc(100%+4px)] bg-[var(--accent)] rounded-full" style={{ left: `${mktPct}%` }} title="Market rate" />
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+              <p className="text-[9px] text-[var(--text-muted)] mt-3">
+                Compares your pipeline&apos;s note rates to the current 30-year fixed market rate. Loans above market may benefit from rate renegotiation.
+              </p>
+            </div>
+          </Section>
+        )}
+
         {/* ═══════ AFFORDABILITY IMPACT ═══════ */}
         {affordability && (
           <Section id="affordability" title="Affordability Impact Calculator" icon={<DollarSign className="w-4 h-4 text-emerald-600" />}>
@@ -483,6 +648,38 @@ export default function MarketPage() {
               </div>
               <p className="text-[10px] text-[var(--text-muted)] mt-3 border-t border-[var(--border)] pt-2">
                 Generated from live FRED data. Use these points when discussing rates and market conditions with your borrowers.
+              </p>
+            </div>
+          </Section>
+        )}
+
+        {/* ═══════ UPCOMING RATE-MOVING EVENTS ═══════ */}
+        {upcomingEvents.length > 0 && (
+          <Section id="events" title="Upcoming Rate-Moving Events" icon={<Calendar className="w-4 h-4 text-purple-600" />}>
+            <div className="glass-card p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                {upcomingEvents.map((evt, i) => {
+                  const d = new Date(evt.date + "T12:00:00");
+                  const daysAway = Math.max(0, Math.ceil((d.getTime() - Date.now()) / 86400000));
+                  return (
+                    <div key={i} className={`p-3 rounded-lg border ${daysAway <= 3 ? "bg-red-50 border-red-200" : daysAway <= 7 ? "bg-amber-50 border-amber-200" : "bg-[var(--bg-secondary)] border-[var(--border)]"}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${evt.type === "fed" ? "bg-purple-100 text-purple-700" : evt.type === "inflation" ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}`}>
+                          {evt.type === "fed" ? "FED" : evt.type === "inflation" ? "CPI" : "JOBS"}
+                        </span>
+                        <span className={`text-[10px] font-medium ${daysAway <= 3 ? "text-red-600" : daysAway <= 7 ? "text-amber-600" : "text-[var(--text-muted)]"}`}>
+                          {daysAway === 0 ? "TODAY" : daysAway === 1 ? "TOMORROW" : `${daysAway}d away`}
+                        </span>
+                      </div>
+                      <div className="text-xs font-semibold text-[var(--text)]">{evt.label}</div>
+                      <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</div>
+                      {evt.impact === "high" && <div className="text-[9px] text-red-500 font-medium mt-0.5 flex items-center gap-0.5"><Zap className="w-2.5 h-2.5" /> High market impact</div>}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[9px] text-[var(--text-muted)] mt-3 border-t border-[var(--border)] pt-2">
+                These events historically cause significant rate volatility. Consider timing lock recommendations around these dates. FOMC decisions and CPI releases have the highest impact on mortgage rates.
               </p>
             </div>
           </Section>
