@@ -34,7 +34,7 @@ const TABS: { id: TabId; label: string; href: string; icon?: React.ReactNode }[]
 ];
 
 export default function AppHeader({ activeTab, rightContent }: AppHeaderProps) {
-  const [connected, setConnected] = useState<boolean | null>(() => getConnectedStatus());
+  const [connected, setConnected] = useState<boolean | null>(null);
   const [totalLoans, setTotalLoans] = useState(0);
   const [syncAge, setSyncAge] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
