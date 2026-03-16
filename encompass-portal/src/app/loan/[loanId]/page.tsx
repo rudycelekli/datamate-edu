@@ -30,8 +30,10 @@ import {
   FolderOpen,
   ChevronDown,
   ChevronRight,
+  Sparkles,
 } from "lucide-react";
 import { FIELD_LABEL_MAP } from "@/lib/field-definitions";
+import LoanCopilot from "@/components/LoanCopilot";
 
 interface LoanData {
   [key: string]: unknown;
@@ -654,6 +656,7 @@ export default function LoanDetailPage({
   const [milestones, setMilestones] = useState<MilestoneItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copilotOpen, setCopilotOpen] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -695,6 +698,62 @@ export default function LoanDetailPage({
   const getField = (id: string) => {
     const f = fields.find((x) => x.fieldId === id);
     return f?.value || "";
+  };
+
+  // Build non-PII loan context for Milo AI copilot
+  const buildLoanCtx = (): string => {
+    if (!loan) return "";
+    const l = loan as Record<string, unknown>;
+    const prop = (loan.applications as { property?: Record<string, unknown> }[])?.[0]?.property;
+    const borr = (loan.applications as { borrower?: Record<string, unknown> }[])?.[0]?.borrower;
+    const lines: string[] = ["## Current Loan Details", ""];
+    lines.push(`Loan Number: ${l.loanNumber || "N/A"}`);
+    lines.push(`Loan Amount: $${Number(l.baseLoanAmount || 0).toLocaleString()}`);
+    lines.push(`Note Rate: ${l.requestedInterestRatePercent ? `${Number(l.requestedInterestRatePercent).toFixed(3)}%` : "N/A"}`);
+    lines.push(`Loan Program: ${getField("1401") || String(l.loanProgramName || "N/A")}`);
+    lines.push(`Loan Purpose: ${getField("19") || String(l.loanPurposeType || "N/A")}`);
+    lines.push(`Lien Position: ${getField("420") || "N/A"}`);
+    lines.push(`LTV: ${getField("353") ? `${getField("353")}%` : "N/A"}`);
+    lines.push(`File Status: ${getField("CX.FILE.STATUS") || String(l.loanFolder || "N/A")}`);
+    lines.push(`Credit Score: ${borr?.middleCreditScore || borr?.middleFicoScore || getField("VASUMM.X23") || "N/A"}`);
+    lines.push("", "Property:");
+    lines.push(`  Address: ${prop?.streetAddress || getField("11") || "N/A"}`);
+    lines.push(`  City: ${prop?.city || getField("12") || "N/A"}`);
+    lines.push(`  State: ${prop?.state || getField("14") || "N/A"}`);
+    lines.push(`  Zip: ${prop?.postalCode || getField("15") || "N/A"}`);
+    lines.push(`  County: ${prop?.county || getField("13") || "N/A"}`);
+    lines.push(`  Occupancy: ${getField("1811") || "N/A"}`);
+    lines.push("", "Loan Team:");
+    lines.push(`  Loan Officer: ${getField("317") || "N/A"}`);
+    lines.push(`  Processor: ${getField("362") || "N/A"}`);
+    lines.push(`  Channel: ${getField("2626") || "N/A"}`);
+    lines.push("", "Key Dates:");
+    const dateFields = [
+      ["Application", getField("3142") || getField("745")],
+      ["Closing", getField("748")],
+      ["Lock Date", getField("761")],
+      ["Lock Expiration", getField("762")],
+      ["CD Sent", getField("3977")],
+      ["COE", getField("CX.BSCLOSEBYDATE")],
+    ];
+    dateFields.forEach(([label, val]) => { if (val) lines.push(`  ${label}: ${val}`); });
+    lines.push("", "Pricing:");
+    const pricingFields = [
+      ["Note Rate", getField("3")],
+      ["Buy Price", getField("2218")],
+      ["Corp Margin", getField("CX.CORPORATE.MARGIN")],
+      ["Branch Margin", getField("CX.BRANCH.MARGIN")],
+      ["LO Margin", getField("CX.LO.MARGIN")],
+    ];
+    pricingFields.forEach(([label, val]) => { if (val) lines.push(`  ${label}: ${val}`); });
+    if (milestones.length > 0) {
+      lines.push("", "Milestones:");
+      milestones.forEach(ms => {
+        lines.push(`  ${ms.milestoneName || "Unknown"}: ${ms.doneIndicator ? "Complete" : "Pending"}`);
+      });
+    }
+    lines.push("", `Documents: ${docs.summary.totalDocuments} total, ${docs.summary.docsWithAttachments} with files, ${docs.summary.totalAttachments} attachments`);
+    return lines.join("\n");
   };
 
   const borrowerName = loan
@@ -756,7 +815,9 @@ export default function LoanDetailPage({
   )?.[0]?.borrower;
 
   return (
-    <div className="min-h-screen">
+    <>
+      <LoanCopilot isOpen={copilotOpen} onClose={() => setCopilotOpen(false)} loanContext={buildLoanCtx()} />
+      <div className={`min-h-screen transition-all duration-300 ${copilotOpen ? "ml-[420px]" : ""}`}>
       {/* Header */}
       <header className="border-b border-[var(--border)] bg-white sticky top-0 z-50">
         <div className="max-w-[1600px] mx-auto px-6 py-3">
@@ -795,12 +856,25 @@ export default function LoanDetailPage({
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => window.location.reload()}
-              className="flex items-center gap-2 px-3 py-1.5 bg-[var(--accent)] text-white rounded-lg text-xs hover:bg-[var(--accent-dark)]"
-            >
-              <RefreshCw className="w-3 h-3" /> Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCopilotOpen(!copilotOpen)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  copilotOpen
+                    ? "bg-orange-100 text-[var(--accent)] border border-orange-200"
+                    : "bg-white text-[var(--text-muted)] border border-[var(--border)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Milo AI</span>
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="flex items-center gap-2 px-3 py-1.5 bg-[var(--accent)] text-white rounded-lg text-xs hover:bg-[var(--accent-dark)]"
+              >
+                <RefreshCw className="w-3 h-3" /> Refresh
+              </button>
+            </div>
           </div>
 
           {/* Tabs */}
@@ -1211,6 +1285,7 @@ export default function LoanDetailPage({
           </div>
         )}
       </main>
-    </div>
+      </div>
+    </>
   );
 }
