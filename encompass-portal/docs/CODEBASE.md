@@ -29,7 +29,7 @@
 **Encompass Portal** (branded "Premier Lending Portal") is an internal mortgage pipeline management dashboard for Premier Lending. It connects to ICE Mortgage Technology's Encompass LOS (Loan Origination System) to pull loan data, stores it in Supabase (PostgreSQL), and provides:
 
 - **Pipeline Dashboard** — Filterable, sortable loan table with AI-powered natural language search
-- **Intelligence Analytics** — 8 chart sections with AI-generated insights and an interactive query bar
+- **Intelligence Analytics** — 9 chart sections with AI-generated insights, interactive query bar, and deep strategic analysis
 - **Market Intelligence** — Live mortgage rates, economic indicators, rate lock advisor, industry news
 - **Milo AI** — An AI underwriting assistant backed by mortgage guideline PDFs (FHA, VA, Fannie Mae, Freddie Mac, USDA)
 - **Loan Detail** — 5-tab deep-dive into individual loans with documents, milestones, mapped fields, raw JSON, plus a collapsible **Milo AI Copilot** sidebar that provides loan-specific AI guidance
@@ -97,7 +97,7 @@ encompass-portal/
 │   │   ├── intelligence/page.tsx   # Intelligence analytics (/intelligence)
 │   │   ├── market/page.tsx         # Market intelligence (/market)
 │   │   ├── milo/page.tsx           # Milo AI chat (/milo)
-│   │   └── api/                    # 19 API route files (see §9)
+│   │   └── api/                    # 20 API route files (see §9)
 │   ├── components/
 │   │   ├── AppHeader.tsx        # Shared nav header
 │   │   ├── LoanCopilot.tsx      # Milo AI copilot sidebar for loan detail page
@@ -232,6 +232,7 @@ Two clients:
 | `/api/ai-search` | `claude-haiku-4-5-20251001` | Natural language → SQL for pipeline search |
 | `/api/intelligence/ask` | `claude-haiku-4-5-20251001` | Text-to-SQL for analytics charts (fast path) or blueprint generation (fallback) |
 | `/api/intelligence/insight` | `claude-sonnet-4-20250514` | Per-chart AI insights with actionable recommendations |
+| `/api/intelligence/deep-analysis` | `claude-sonnet-4-20250514` | Streaming strategic pipeline analysis (5-section, 2000-3000 words) |
 | `/api/milo/chat` | `claude-sonnet-4-20250514` | Streaming mortgage underwriting assistant with PDF documents |
 
 **Auth**: `x-api-key` header with `ANTHROPIC_API_KEY`. API version `2023-06-01`.
@@ -494,13 +495,13 @@ Custom SVG choropleth map of the US using TopoJSON (us-atlas).
 
 **Raw JSON** — Collapsible JSON viewer of the full Encompass loan response. Copy-to-clipboard.
 
-### 8.3 Intelligence Page — `intelligence/page.tsx` (~1,251 lines, route: `/intelligence`)
+### 8.3 Intelligence Page — `intelligence/page.tsx` (~1,430 lines, route: `/intelligence`)
 
-**Purpose**: Analytics dashboard with 8 chart sections + AI query bar.
+**Purpose**: Analytics dashboard with 9 chart sections + AI query bar.
 
 **Data fetching**: `GET /api/intelligence/stats?state=...&lo=...&milestone=...&program=...&purpose=...&lock=...&dateFrom=...&dateTo=...` → pre-aggregated stats (~5KB). Auto-refetch every 5 minutes.
 
-**8 chart sections** (all collapsible):
+**9 chart sections** (all collapsible):
 1. **Geographic Distribution** — USMap heatmap + top states table
 2. **Pipeline Snapshot** — Milestone bar chart + lock status pie chart
 3. **Loan Characteristics** — Rate distribution + amount distribution bar charts
@@ -509,10 +510,12 @@ Custom SVG choropleth map of the US using TopoJSON (us-atlas).
 6. **Timeline & Alerts** — Monthly trend line chart (last 12 months)
 7. **Performance Metrics** — Avg rate by program, avg loan size by program
 8. **Cross-Tab Analysis** — State × Purpose stacked bar chart
+9. **Deep Analysis** — AI-powered strategic pipeline analysis (see below)
 
 **AI Features**:
 - **AI Query Bar**: Text input → `POST /api/intelligence/ask` → chart response with data. Supports bar, pie, line, horizontal-bar, stacked-bar, grouped-bar, multi-line, table chart types. Two-tier approach: text-to-SQL (fast path) or blueprint (fallback).
 - **AI Insight buttons**: Per-chart "Get AI Insight" → `POST /api/intelligence/insight` → bullet-point analysis from Sonnet.
+- **Deep Analysis**: Manual-trigger streaming analysis via `POST /api/intelligence/deep-analysis`. Sends all pre-aggregated stats to Claude Sonnet, which produces a 5-section strategic report: (1) Pipeline Health by Milestone Stage, (2) Trend Discovery & Pattern Analysis, (3) Risk Alerts & Red Flags (CRITICAL/WARNING/ADVISORY), (4) Strategic Recommendations (5-7 actionable items), (5) Deep Dive (random surprising topic or user-specified topic). Supports 4 optional focus controls (milestone, state, LO, free-text topic) that weight the AI emphasis without changing the data. Streaming response (~2000-3000 words) renders progressively with a custom markdown renderer (headers, bold, code, bullet/numbered lists, tables with orange headers, horizontal rules). Results clear automatically when page filters change. Abort via AbortController.
 
 **Filters**: 8 dropdowns with pill badges showing active count. Filters applied server-side.
 
@@ -691,7 +694,28 @@ Per-chart AI insight generation.
 
 **Response**: `{ insight: string }`
 
-### 9.14 `milo/chat` — POST
+### 9.14 `intelligence/deep-analysis` — POST
+Streaming strategic pipeline analysis.
+
+**Request**: `{ stats: StatsData, focus?: { milestone?, state?, lo?, topic? }, filters?: { state?, lo?, milestone?, program?, purpose?, lock?, dateFrom?, dateTo? } }`
+
+**Model**: `claude-sonnet-4-20250514` (4096 max tokens, streaming)
+
+**System prompt**: Senior mortgage pipeline strategist. Produces structured 5-section analysis:
+1. Pipeline Health by Milestone Stage (early/active/approval/post-close)
+2. Trend Discovery & Pattern Analysis (momentum, program shifts, geographic concentration, rate clusters, LO concentration, lock health)
+3. Risk Alerts & Red Flags (CRITICAL/WARNING/ADVISORY with specific data points)
+4. Strategic Recommendations (5-7 numbered, actionable items with impact estimates)
+5. Deep Dive (AI picks a surprising topic, or uses user's custom topic)
+
+**Focus controls**: Optional milestone/state/LO/topic params weight the AI emphasis. Active page-level filters are noted so AI knows data is a filtered subset.
+
+**Stream format**: Same SSE-to-plain-text pattern as `/api/milo/chat`. Client reads via `ReadableStream.getReader()`.
+
+**Response**: Streamed plain text (~2000-3000 words of markdown).
+
+### 9.15 `milo/chat` — POST
+
 Streaming mortgage AI assistant.
 
 **Request**: `{ messages: ChatMessage[], pipelineContext?: string, loanContext?: string }`
@@ -711,7 +735,7 @@ Streaming mortgage AI assistant.
 - `pipelineContext` → `## Live Pipeline Data` section (portfolio-level stats from `getPipelineSummary()`)
 - `loanContext` → `## Current Loan Context` section (individual loan non-PII data from `buildLoanCtx()`). Enables the AI to answer questions about "this loan" with specific details about the program, amount, rate, property, dates, milestones, and pricing.
 
-### 9.15 `milo/docs` — GET
+### 9.16 `milo/docs` — GET
 Serves PDF files for the Milo AI side panel.
 
 **Query params**: `?file=filename.pdf`
@@ -720,7 +744,7 @@ Serves PDF files for the Milo AI side panel.
 
 **Headers**: `Content-Type: application/pdf`, `Cache-Control: public, max-age=86400`.
 
-### 9.16 `market/rates` — GET
+### 9.17 `market/rates` — GET
 Fetches all market data from FRED in parallel (21 series).
 
 **Response**:
@@ -740,14 +764,14 @@ Fetches all market data from FRED in parallel (21 series).
 }
 ```
 
-### 9.17 `market/news` — GET
+### 9.18 `market/news` — GET
 Fetches and aggregates Google News RSS feeds.
 
 **Query params**: `?category=mortgage-rates|housing-market|fed-policy|lending-industry|local-market&states=CA,TX,FL`
 
 **Response**: `{ items: NewsItem[], fetchedAt }` — sorted by date desc, deduplicated.
 
-### 9.18 `cron/sync-pipeline` — POST, GET
+### 9.19 `cron/sync-pipeline` — POST, GET
 Delta sync: fetches recently modified loans from Encompass, upserts to Supabase.
 
 **Auth**: `CRON_SECRET` Bearer token (optional, for Vercel Cron).
@@ -761,7 +785,7 @@ Delta sync: fetches recently modified loans from Encompass, upserts to Supabase.
 
 **Vercel**: `maxDuration = 60` (Pro plan).
 
-### 9.19 `cron/normalize-dates` — POST, GET
+### 9.20 `cron/normalize-dates` — POST, GET
 One-time maintenance: normalizes US-format dates ("MM/DD/YYYY HH:MM:SS AM/PM") to ISO format in all date columns.
 
 **Columns**: date_created, last_modified, closing_date, lock_expiration, application_date.

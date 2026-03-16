@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import AppHeader from "@/components/AppHeader";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
@@ -9,7 +9,7 @@ import {
 import {
   Loader2, TrendingUp, DollarSign, FileText, Users, MapPin, Clock,
   AlertTriangle, Sparkles, X, ChevronDown, ChevronUp, BarChart3, Filter,
-  MessageSquare, Send, Trash2, Download, Table2,
+  MessageSquare, Send, Trash2, Download, Table2, Brain,
 } from "lucide-react";
 import USMap from "@/components/USMap";
 
@@ -40,7 +40,7 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
   );
 };
 
-type Section = "snapshot" | "geography" | "characteristics" | "distribution" | "timeline" | "officers" | "performance" | "crosstab";
+type Section = "snapshot" | "geography" | "characteristics" | "distribution" | "timeline" | "officers" | "performance" | "crosstab" | "deepanalysis";
 
 interface StatsData {
   totalUnits: number;
@@ -117,6 +117,16 @@ export default function IntelligencePage() {
   const [aiChatLoading, setAiChatLoading] = useState(false);
   const [aiShowDataIdx, setAiShowDataIdx] = useState<number | null>(null);
 
+  // Deep Analysis
+  const [deepAnalysisResult, setDeepAnalysisResult] = useState("");
+  const [deepAnalysisLoading, setDeepAnalysisLoading] = useState(false);
+  const [deepAnalysisRan, setDeepAnalysisRan] = useState(false);
+  const [deepFocusMilestone, setDeepFocusMilestone] = useState("");
+  const [deepFocusState, setDeepFocusState] = useState("");
+  const [deepFocusLO, setDeepFocusLO] = useState("");
+  const [deepFocusTopic, setDeepFocusTopic] = useState("");
+  const deepAbortRef = useRef<AbortController | null>(null);
+
   const fetchAll = useCallback(async () => {
     setError("");
     setRefreshing(true);
@@ -150,6 +160,11 @@ export default function IntelligencePage() {
     if (aiChatMessages.length > 0) {
       setAiChatMessages([]);
       setAiChatOpen(false);
+    }
+    if (deepAnalysisRan) {
+      setDeepAnalysisResult("");
+      setDeepAnalysisRan(false);
+      setDeepAnalysisLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchAll]);
@@ -275,6 +290,207 @@ export default function IntelligencePage() {
     a.download = `${filename}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Deep Analysis handler
+  const runDeepAnalysis = async () => {
+    setDeepAnalysisLoading(true);
+    setDeepAnalysisResult("");
+    setDeepAnalysisRan(true);
+    const controller = new AbortController();
+    deepAbortRef.current = controller;
+
+    const filters: Record<string, string> = {};
+    if (filterState) filters.state = filterState;
+    if (filterLO) filters.lo = filterLO;
+    if (filterMilestone) filters.milestone = filterMilestone;
+    if (filterProgram) filters.program = filterProgram;
+    if (filterPurpose) filters.purpose = filterPurpose;
+    if (filterLock) filters.lock = filterLock;
+    if (filterDateFrom) filters.dateFrom = filterDateFrom;
+    if (filterDateTo) filters.dateTo = filterDateTo;
+
+    const focus: Record<string, string> = {};
+    if (deepFocusMilestone) focus.milestone = deepFocusMilestone;
+    if (deepFocusState) focus.state = deepFocusState;
+    if (deepFocusLO) focus.lo = deepFocusLO;
+    if (deepFocusTopic) focus.topic = deepFocusTopic;
+
+    try {
+      const res = await fetch("/api/intelligence/deep-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stats,
+          focus: Object.keys(focus).length > 0 ? focus : undefined,
+          filters: Object.keys(filters).length > 0 ? filters : undefined,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Failed" }));
+        setDeepAnalysisResult(`Error: ${err.error || err.detail || "Analysis failed"}`);
+        setDeepAnalysisLoading(false);
+        return;
+      }
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        setDeepAnalysisResult(accumulated);
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // User cancelled — keep what we have
+      } else {
+        setDeepAnalysisResult(prev => prev || "Unable to generate analysis. Check API key configuration.");
+      }
+    } finally {
+      setDeepAnalysisLoading(false);
+      deepAbortRef.current = null;
+    }
+  };
+
+  const cancelDeepAnalysis = () => {
+    deepAbortRef.current?.abort();
+    setDeepAnalysisLoading(false);
+  };
+
+  const clearDeepAnalysis = () => {
+    setDeepAnalysisResult("");
+    setDeepAnalysisRan(false);
+  };
+
+  // Simplified markdown renderer for deep analysis (no PDF citations)
+  const renderDeepMarkdown = (text: string) => {
+    const lines = text.split("\n");
+    const elements: React.ReactNode[] = [];
+    let i = 0;
+
+    const formatInline = (s: string) => {
+      // bold, code, italic
+      return s
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-gray-100 rounded text-xs font-mono">$1</code>');
+    };
+
+    while (i < lines.length) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Horizontal rule
+      if (/^---+$/.test(trimmed)) {
+        elements.push(<hr key={i} className="my-4 border-[var(--border)]" />);
+        i++;
+        continue;
+      }
+
+      // H2 header
+      if (trimmed.startsWith("## ")) {
+        elements.push(
+          <h3 key={i} className="text-base font-bold mt-5 mb-2 text-[var(--text)] flex items-center gap-2">
+            <span className="w-1.5 h-5 bg-[var(--accent)] rounded-full inline-block" />
+            <span dangerouslySetInnerHTML={{ __html: formatInline(trimmed.slice(3)) }} />
+          </h3>
+        );
+        i++;
+        continue;
+      }
+
+      // H3 header
+      if (trimmed.startsWith("### ")) {
+        elements.push(
+          <h4 key={i} className="text-sm font-semibold mt-3 mb-1.5 text-[var(--text)]" dangerouslySetInnerHTML={{ __html: formatInline(trimmed.slice(4)) }} />
+        );
+        i++;
+        continue;
+      }
+
+      // Table detection
+      if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+        const tableLines: string[] = [];
+        while (i < lines.length && lines[i].trim().startsWith("|") && lines[i].trim().endsWith("|")) {
+          tableLines.push(lines[i].trim());
+          i++;
+        }
+        if (tableLines.length >= 2) {
+          const parseRow = (row: string) => row.split("|").slice(1, -1).map(c => c.trim());
+          const headers = parseRow(tableLines[0]);
+          const isSeparator = (r: string) => /^\|[\s\-:|]+\|$/.test(r);
+          const dataStart = isSeparator(tableLines[1]) ? 2 : 1;
+          const bodyRows = tableLines.slice(dataStart).map(parseRow);
+
+          elements.push(
+            <div key={`table-${i}`} className="overflow-x-auto my-3">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-orange-50 border-b-2 border-[var(--accent)]">
+                    {headers.map((h, hi) => (
+                      <th key={hi} className="text-left py-2 px-3 font-semibold text-[var(--text)]" dangerouslySetInnerHTML={{ __html: formatInline(h) }} />
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {bodyRows.map((row, ri) => (
+                    <tr key={ri} className="border-b border-[var(--border)]/50 hover:bg-[var(--bg-secondary)]">
+                      {row.map((cell, ci) => (
+                        <td key={ci} className="py-1.5 px-3" dangerouslySetInnerHTML={{ __html: formatInline(cell) }} />
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+          continue;
+        }
+      }
+
+      // Numbered list
+      if (/^\d+\.\s/.test(trimmed)) {
+        elements.push(
+          <div key={i} className="flex gap-2 items-start my-1">
+            <span className="text-[var(--accent)] font-bold text-xs mt-0.5 shrink-0 w-5 text-right">{trimmed.match(/^(\d+)\./)?.[1]}.</span>
+            <span className="text-sm" dangerouslySetInnerHTML={{ __html: formatInline(trimmed.replace(/^\d+\.\s+/, "")) }} />
+          </div>
+        );
+        i++;
+        continue;
+      }
+
+      // Bullet list
+      if (/^[-•*]\s/.test(trimmed)) {
+        elements.push(
+          <div key={i} className="flex gap-2 items-start my-0.5">
+            <span className="mt-2 shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--accent)]" />
+            <span className="text-sm" dangerouslySetInnerHTML={{ __html: formatInline(trimmed.replace(/^[-•*]\s+/, "")) }} />
+          </div>
+        );
+        i++;
+        continue;
+      }
+
+      // Empty line
+      if (!trimmed) {
+        elements.push(<div key={i} className="h-2" />);
+        i++;
+        continue;
+      }
+
+      // Regular paragraph
+      elements.push(
+        <p key={i} className="text-sm my-1" dangerouslySetInnerHTML={{ __html: formatInline(trimmed) }} />
+      );
+      i++;
+    }
+
+    return elements;
   };
 
   const toggleSection = (s: Section) => {
@@ -1242,6 +1458,102 @@ export default function IntelligencePage() {
                 </PieChart>
               </ResponsiveContainer>
             </div>
+          </div>
+        )}
+
+        {/* ─── Section 8: Deep Analysis ─── */}
+        <SectionHeader id="deepanalysis" title="Deep Analysis" icon={Brain} subtitle="AI-powered strategic pipeline analysis" />
+        {expandedSection === "deepanalysis" && (
+          <div className="glass-card p-4 mb-6">
+            {/* Focus controls */}
+            <div className="mb-4">
+              <p className="text-xs text-[var(--text-muted)] mb-2">Optional: Focus the analysis on a specific dimension</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                <select value={deepFocusMilestone} onChange={(e) => setDeepFocusMilestone(e.target.value)} className="text-xs border border-[var(--border)] rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-[var(--accent)]">
+                  <option value="">Focus: Any Milestone</option>
+                  {filterOptions.milestones.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select value={deepFocusState} onChange={(e) => setDeepFocusState(e.target.value)} className="text-xs border border-[var(--border)] rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-[var(--accent)]">
+                  <option value="">Focus: Any State</option>
+                  {filterOptions.states.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select value={deepFocusLO} onChange={(e) => setDeepFocusLO(e.target.value)} className="text-xs border border-[var(--border)] rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-[var(--accent)]">
+                  <option value="">Focus: Any LO</option>
+                  {filterOptions.officers.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <input
+                  value={deepFocusTopic}
+                  onChange={(e) => setDeepFocusTopic(e.target.value)}
+                  placeholder="Custom topic (e.g. FHA conversion rates)"
+                  className="text-xs border border-[var(--border)] rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-[var(--accent)]"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                {!deepAnalysisLoading ? (
+                  <button
+                    onClick={runDeepAnalysis}
+                    disabled={!serverStats}
+                    className="flex items-center gap-2 px-4 py-2 bg-[var(--accent)] text-white rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Brain className="w-4 h-4" />
+                    Run Deep Analysis
+                  </button>
+                ) : (
+                  <button
+                    onClick={cancelDeepAnalysis}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                    Cancel
+                  </button>
+                )}
+                {deepAnalysisRan && !deepAnalysisLoading && (
+                  <button
+                    onClick={clearDeepAnalysis}
+                    className="flex items-center gap-2 px-3 py-2 bg-[var(--bg-secondary)] text-[var(--text-muted)] rounded-lg text-sm hover:text-[var(--text)] transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Clear
+                  </button>
+                )}
+                {deepAnalysisLoading && (
+                  <span className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                    <Loader2 className="w-4 h-4 animate-spin text-[var(--accent)]" />
+                    Analyzing pipeline data...
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Results area */}
+            {deepAnalysisResult ? (
+              <div className="border border-[var(--border)] rounded-lg p-4 bg-white max-h-[700px] overflow-y-auto">
+                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[var(--border)]">
+                  <Sparkles className="w-4 h-4 text-[var(--accent)]" />
+                  <span className="text-sm font-semibold text-[var(--accent)]">Strategic Pipeline Analysis</span>
+                  {(deepFocusMilestone || deepFocusState || deepFocusLO || deepFocusTopic) && (
+                    <span className="text-xs text-[var(--text-muted)] ml-2">
+                      Focus: {[deepFocusMilestone, deepFocusState, deepFocusLO, deepFocusTopic].filter(Boolean).join(", ")}
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-0">
+                  {renderDeepMarkdown(deepAnalysisResult)}
+                </div>
+                {deepAnalysisLoading && (
+                  <span className="inline-block w-2 h-4 bg-[var(--accent)] animate-pulse rounded-sm ml-0.5 align-text-bottom" />
+                )}
+              </div>
+            ) : !deepAnalysisRan ? (
+              <div className="border border-dashed border-[var(--border)] rounded-lg p-8 text-center">
+                <Brain className="w-10 h-10 text-[var(--text-muted)] mx-auto mb-3 opacity-40" />
+                <p className="text-sm text-[var(--text-muted)] mb-1">Click &quot;Run Deep Analysis&quot; to generate a comprehensive AI-powered strategic analysis</p>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Analyzes pipeline health, discovers hidden trends, flags risks, and provides actionable recommendations.
+                  {activeFilterCount > 0 && " Analysis will reflect your current filters."}
+                </p>
+              </div>
+            ) : null}
           </div>
         )}
       </main>
