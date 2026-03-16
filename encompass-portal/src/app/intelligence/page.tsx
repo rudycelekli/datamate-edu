@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import AppHeader from "@/components/AppHeader";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
@@ -8,64 +8,15 @@ import {
 } from "recharts";
 import {
   Loader2, TrendingUp, DollarSign, FileText, Users, MapPin, Clock,
-  AlertTriangle, Sparkles, X, ChevronDown, ChevronUp, BarChart3, Filter, RotateCcw,
+  AlertTriangle, Sparkles, X, ChevronDown, ChevronUp, BarChart3, Filter,
   MessageSquare, Send, Trash2, Download, Table2,
 } from "lucide-react";
 import USMap from "@/components/USMap";
-import {
-  getIntelCache,
-  setIntelCache,
-  isIntelFresh,
-  getConnectedStatus,
-  setConnectedStatus,
-  compactToPipelineRow,
-} from "@/lib/pipeline-store";
-
-interface PipelineRow {
-  loanGuid: string;
-  fields: Record<string, string>;
-}
-
-interface CompactRow {
-  guid: string;
-  amt: number;
-  prog: string;
-  purp: string;
-  ms: string;
-  lo: string;
-  lock: string;
-  rate: number;
-  st: string;
-  dt: string;
-  lien: string;
-  ln: string;
-  channel: string;
-  closingDate: string;
-  lockExp: string;
-  modified: string;
-}
-
-interface CompactResponse {
-  rows: CompactRow[];
-  total: number;
-  cacheAge: number;
-  filterOptions: {
-    milestones: string[];
-    los: string[];
-    states: string[];
-    purposes: string[];
-    locks: string[];
-    programs: string[];
-  };
-}
 
 const COLORS = [
   "#EA580C", "#2563EB", "#16A34A", "#D97706", "#7C3AED", "#DC2626",
   "#0891B2", "#4F46E5", "#059669", "#E11D48", "#8B5CF6", "#F59E0B",
 ];
-
-const pf = (f: Record<string, string>, canonical: string, fieldId?: string) =>
-  f[canonical] || (fieldId ? f[`Fields.${fieldId}`] : "") || "";
 
 const fmtCurrency = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
@@ -91,27 +42,41 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
 
 type Section = "snapshot" | "geography" | "characteristics" | "distribution" | "timeline" | "officers" | "performance" | "crosstab";
 
+interface StatsData {
+  totalUnits: number;
+  totalVolume: number;
+  milestoneData: Array<{ name: string; units: number; volume: number }>;
+  stateData: Array<{ name: string; units: number; volume: number }>;
+  programData: Array<{ name: string; units: number; volume: number }>;
+  purposeData: Array<{ name: string; units: number; volume: number }>;
+  loData: Array<{ name: string; units: number; volume: number }>;
+  lockData: Array<{ name: string; value: number }>;
+  rateData: Array<{ name: string; units: number }>;
+  amountData: Array<{ name: string; units: number }>;
+  trendData: Array<{ name: string; units: number; volume: number }>;
+  lienData: Array<{ name: string; value: number }>;
+  topState: string;
+  topStatePercent: string;
+  avgRate: string;
+  purchasePercent: string;
+  byStateMap: Record<string, { units: number; volume: number }>;
+  avgByProgram: Array<{ name: string; avgAmount: number; units: number }>;
+  milestoneVolData: Array<{ name: string; units: number; volume: number }>;
+  avgRateByProgram: Array<{ name: string; avgRate: number }>;
+  statePurposeData: Array<Record<string, unknown>>;
+  allPurposes: string[];
+  loTableData: Array<{ name: string; units: number; volume: number; avgLoan: number; pct: number }>;
+  filterOptions?: { milestones: string[]; los: string[]; states: string[]; purposes: string[]; locks: string[]; programs: string[] };
+  cacheAge?: number;
+}
+
 export default function IntelligencePage() {
-  // Start with empty state to avoid hydration mismatch (server has no sessionStorage).
-  // useEffect below restores cached data on the client immediately after mount.
-  const [rows, setRows] = useState<PipelineRow[]>([]);
+  const [serverStats, setServerStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expandedSection, setExpandedSection] = useState<Section | null>("snapshot");
   const [cacheAge, setCacheAge] = useState(0);
-  const [totalInCache, setTotalInCache] = useState(0);
-
-  // Restore from cache on mount (client-only)
-  useEffect(() => {
-    const cached = getIntelCache();
-    if (cached.rows && cached.rows.length > 0) {
-      setRows(cached.rows);
-      setCacheAge(cached.meta?.cacheAge || 0);
-      setTotalInCache(cached.meta?.total || 0);
-      setLoading(false);
-    }
-  }, []);
-  const [warmingProgress, setWarmingProgress] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Filters
   const [filterState, setFilterState] = useState("");
@@ -131,13 +96,14 @@ export default function IntelligencePage() {
 
   // AI Chat
   interface AiChart {
-    type: "bar" | "pie" | "line" | "horizontal-bar" | "table";
+    type: "bar" | "pie" | "line" | "horizontal-bar" | "table" | "stacked-bar" | "grouped-bar" | "multi-line";
     title: string;
     dataKey: string;
     nameKey: string;
     data: Array<Record<string, unknown>>;
     fullData?: Array<Record<string, unknown>>;
     secondaryDataKey?: string;
+    seriesKeys?: string[];
     formatValue?: "currency" | "number" | "percent" | "rate";
   }
   interface AiChatMessage {
@@ -151,328 +117,65 @@ export default function IntelligencePage() {
   const [aiChatLoading, setAiChatLoading] = useState(false);
   const [aiShowDataIdx, setAiShowDataIdx] = useState<number | null>(null);
 
-  const fetchAll = useCallback(async (force = false) => {
-    // Skip fetch if shared cache is fresh
-    if (!force && isIntelFresh()) return;
-
-    // Only show loading spinner if we don't have cached data
-    if (!getIntelCache().rows) setLoading(true);
+  const fetchAll = useCallback(async () => {
     setError("");
+    setRefreshing(true);
     try {
-      const res = await fetch("/api/pipeline?all=true&compact=true");
-      if (!res.ok) throw new Error(await res.text());
-      const data: CompactResponse | PipelineRow[] = await res.json();
+      const params = new URLSearchParams();
+      if (filterState) params.set("state", filterState);
+      if (filterLO) params.set("lo", filterLO);
+      if (filterMilestone) params.set("milestone", filterMilestone);
+      if (filterProgram) params.set("program", filterProgram);
+      if (filterPurpose) params.set("purpose", filterPurpose);
+      if (filterLock) params.set("lock", filterLock);
+      if (filterDateFrom) params.set("dateFrom", filterDateFrom);
+      if (filterDateTo) params.set("dateTo", filterDateTo);
 
-      if ("rows" in data && Array.isArray((data as CompactResponse).rows) && (data as CompactResponse).rows.length > 0 && "amt" in (data as CompactResponse).rows[0]) {
-        const compact = data as CompactResponse;
-        const mapped = compact.rows.map(compactToPipelineRow);
-        setRows(mapped);
-        setCacheAge(compact.cacheAge || 0);
-        setTotalInCache(compact.total || compact.rows.length);
-        setIntelCache(mapped, { cacheAge: compact.cacheAge || 0, total: compact.total || compact.rows.length });
-      } else if (Array.isArray(data)) {
-        setRows(data);
-        setTotalInCache(data.length);
-        setIntelCache(data, { cacheAge: 0, total: data.length });
-      } else {
-        setRows([]);
-      }
+      const res = await fetch(`/api/intelligence/stats?${params}`);
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setServerStats(data);
+      setCacheAge(data.cacheAge || 0);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, []);
+  }, [filterState, filterLO, filterMilestone, filterProgram, filterPurpose, filterLock, filterDateFrom, filterDateTo]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchAll();
+    // Clear stale AI results when filters change
+    if (aiChatMessages.length > 0) {
+      setAiChatMessages([]);
+      setAiChatOpen(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchAll]);
 
-  // Connection status check now handled by AppHeader
-
-  // ─── Filter options (from raw data) ───
-  const filterOptions = useMemo(() => {
-    const states = new Set<string>();
-    const officers = new Set<string>();
-    const milestones = new Set<string>();
-    const programs = new Set<string>();
-    const purposes = new Set<string>();
-    const locks = new Set<string>();
-    rows.forEach((r) => {
-      const f = r.fields || {};
-      const st = pf(f, "Loan.SubjectPropertyState", "14");
-      const lo = f["Loan.LoanOfficerName"];
-      const ms = f["Loan.CurrentMilestoneName"];
-      const prog = f["Loan.LoanProgram"];
-      const purp = f["Loan.LoanPurpose"];
-      const lk = f["Loan.LockStatus"];
-      if (st) states.add(st);
-      if (lo) officers.add(lo);
-      if (ms) milestones.add(ms);
-      if (prog) programs.add(prog);
-      if (purp) purposes.add(purp);
-      if (lk) locks.add(lk);
-    });
-    return {
-      states: [...states].sort(),
-      officers: [...officers].sort(),
-      milestones: [...milestones].sort(),
-      programs: [...programs].sort(),
-      purposes: [...purposes].sort(),
-      locks: [...locks].sort(),
-    };
-  }, [rows]);
+  // ─── Filter options (from server) ───
+  const fo = serverStats?.filterOptions;
+  const filterOptions = {
+    states: (fo?.states || []) as string[],
+    officers: (fo?.los || []) as string[],
+    milestones: (fo?.milestones || []) as string[],
+    programs: (fo?.programs || []) as string[],
+    purposes: (fo?.purposes || []) as string[],
+    locks: (fo?.locks || []) as string[],
+  };
 
   const activeFilterCount = [filterState, filterLO, filterMilestone, filterProgram, filterPurpose, filterLock, filterDateFrom, filterDateTo].filter(Boolean).length;
 
-  const clearFilters = () => {
-    setFilterState(""); setFilterLO(""); setFilterMilestone("");
-    setFilterProgram(""); setFilterPurpose(""); setFilterLock("");
-    setFilterDateFrom(""); setFilterDateTo("");
+  // ─── Stats from server (pre-aggregated over ALL loans) ───
+  const stats: StatsData = serverStats || {
+    totalUnits: 0, totalVolume: 0, milestoneData: [], stateData: [], programData: [],
+    purposeData: [], loData: [], lockData: [], rateData: [], amountData: [],
+    trendData: [], lienData: [], topState: "--", topStatePercent: "0",
+    avgRate: "0", purchasePercent: "0", byStateMap: {}, avgByProgram: [],
+    milestoneVolData: [], avgRateByProgram: [], statePurposeData: [], allPurposes: [],
+    loTableData: [],
   };
-
-  // ─── Filtered rows ───
-  const filteredRows = useMemo(() => {
-    if (!activeFilterCount) return rows;
-    return rows.filter((r) => {
-      const f = r.fields || {};
-      if (filterState && pf(f, "Loan.SubjectPropertyState", "14") !== filterState) return false;
-      if (filterLO && (f["Loan.LoanOfficerName"] || "") !== filterLO) return false;
-      if (filterMilestone && (f["Loan.CurrentMilestoneName"] || "") !== filterMilestone) return false;
-      if (filterProgram && (f["Loan.LoanProgram"] || "") !== filterProgram) return false;
-      if (filterPurpose && (f["Loan.LoanPurpose"] || "") !== filterPurpose) return false;
-      if (filterLock && (f["Loan.LockStatus"] || "") !== filterLock) return false;
-      if (filterDateFrom || filterDateTo) {
-        const dtStr = f["Loan.DateCreated"] || pf(f, "", "745") || "";
-        if (!dtStr) return false;
-        const dtMs = new Date(dtStr).getTime();
-        if (filterDateFrom && dtMs < new Date(filterDateFrom).getTime()) return false;
-        if (filterDateTo && dtMs > new Date(filterDateTo + "T23:59:59").getTime()) return false;
-      }
-      return true;
-    });
-  }, [rows, filterState, filterLO, filterMilestone, filterProgram, filterPurpose, filterLock, filterDateFrom, filterDateTo, activeFilterCount]);
-
-  // ─── Aggregations ───
-  const stats = useMemo(() => {
-    const totalUnits = filteredRows.length;
-    const totalVolume = filteredRows.reduce((s, r) => s + (parseFloat(r.fields?.["Loan.LoanAmount"] || "0") || 0), 0);
-
-    // By milestone
-    const byMilestone: Record<string, { units: number; volume: number }> = {};
-    // By state
-    const byState: Record<string, { units: number; volume: number }> = {};
-    // By program (simplify to type)
-    const byProgram: Record<string, { units: number; volume: number }> = {};
-    // By purpose
-    const byPurpose: Record<string, { units: number; volume: number }> = {};
-    // By LO
-    const byLO: Record<string, { units: number; volume: number }> = {};
-    // By lock status
-    const byLock: Record<string, number> = {};
-    // Rate distribution
-    const rateRanges: Record<string, number> = {};
-    // Amount distribution
-    const amountRanges: Record<string, number> = {};
-    // Monthly trend
-    const monthlyTrend: Record<string, { units: number; volume: number }> = {};
-    // Lien position
-    const byLien: Record<string, number> = {};
-
-    filteredRows.forEach((r) => {
-      const f = r.fields || {};
-      const amount = parseFloat(f["Loan.LoanAmount"] || "0") || 0;
-      const milestone = f["Loan.CurrentMilestoneName"] || "Unknown";
-      const state = pf(f, "Loan.SubjectPropertyState", "14") || "Unknown";
-      const program = f["Loan.LoanProgram"] || "Other";
-      const purpose = f["Loan.LoanPurpose"] || "Unknown";
-      const lo = f["Loan.LoanOfficerName"] || "Unknown";
-      const lock = f["Loan.LockStatus"] || "Unknown";
-      const rate = parseFloat(pf(f, "Loan.NoteRatePercent", "3") || "0") || 0;
-      const lien = f["Loan.LienPosition"] || "Unknown";
-      const created = f["Loan.DateCreated"] || "";
-
-      // By milestone
-      if (!byMilestone[milestone]) byMilestone[milestone] = { units: 0, volume: 0 };
-      byMilestone[milestone].units++;
-      byMilestone[milestone].volume += amount;
-
-      // By state
-      if (state !== "Unknown") {
-        if (!byState[state]) byState[state] = { units: 0, volume: 0 };
-        byState[state].units++;
-        byState[state].volume += amount;
-      }
-
-      // By program type (simplify)
-      let pType = "Other";
-      const pl = program.toLowerCase();
-      if (pl.includes("fha")) pType = "FHA";
-      else if (pl.includes("va ") || pl.startsWith("va")) pType = "VA";
-      else if (pl.includes("usda")) pType = "USDA";
-      else if (pl.includes("jumbo")) pType = "Jumbo";
-      else if (pl.includes("conv") || pl.includes("fannie") || pl.includes("freddie") || pl.includes("agency")) pType = "Conventional";
-      if (!byProgram[pType]) byProgram[pType] = { units: 0, volume: 0 };
-      byProgram[pType].units++;
-      byProgram[pType].volume += amount;
-
-      // By purpose
-      if (!byPurpose[purpose]) byPurpose[purpose] = { units: 0, volume: 0 };
-      byPurpose[purpose].units++;
-      byPurpose[purpose].volume += amount;
-
-      // By LO
-      if (lo !== "Unknown") {
-        if (!byLO[lo]) byLO[lo] = { units: 0, volume: 0 };
-        byLO[lo].units++;
-        byLO[lo].volume += amount;
-      }
-
-      // Lock
-      byLock[lock] = (byLock[lock] || 0) + 1;
-
-      // Rate distribution
-      if (rate > 0) {
-        const bucket = rate < 5 ? "<5%" : rate < 5.5 ? "5-5.5%" : rate < 6 ? "5.5-6%" : rate < 6.5 ? "6-6.5%" : rate < 7 ? "6.5-7%" : rate < 7.5 ? "7-7.5%" : rate < 8 ? "7.5-8%" : ">8%";
-        rateRanges[bucket] = (rateRanges[bucket] || 0) + 1;
-      }
-
-      // Amount distribution
-      if (amount > 0) {
-        const bucket = amount < 200000 ? "<$200K" : amount < 300000 ? "$200-300K" : amount < 400000 ? "$300-400K" : amount < 500000 ? "$400-500K" : amount < 750000 ? "$500-750K" : amount < 1000000 ? "$750K-1M" : ">$1M";
-        amountRanges[bucket] = (amountRanges[bucket] || 0) + 1;
-      }
-
-      // Monthly trend
-      if (created) {
-        try {
-          const d = new Date(created);
-          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-          if (!monthlyTrend[key]) monthlyTrend[key] = { units: 0, volume: 0 };
-          monthlyTrend[key].units++;
-          monthlyTrend[key].volume += amount;
-        } catch { /* skip */ }
-      }
-
-      // Lien
-      const lienLabel = lien === "FirstLien" ? "First Lien" : lien === "SecondLien" ? "Second Lien" : lien;
-      byLien[lienLabel] = (byLien[lienLabel] || 0) + 1;
-    });
-
-    // Sort and format
-    const milestoneData = Object.entries(byMilestone)
-      .map(([name, d]) => ({ name, units: d.units, volume: d.volume }))
-      .sort((a, b) => b.units - a.units);
-
-    const stateData = Object.entries(byState)
-      .map(([name, d]) => ({ name, units: d.units, volume: d.volume }))
-      .sort((a, b) => b.volume - a.volume)
-      .slice(0, 20);
-
-    const programData = Object.entries(byProgram)
-      .map(([name, d]) => ({ name, units: d.units, volume: d.volume }))
-      .sort((a, b) => b.volume - a.volume);
-
-    const purposeData = Object.entries(byPurpose)
-      .map(([name, d]) => ({ name, units: d.units, volume: d.volume }))
-      .sort((a, b) => b.volume - a.volume);
-
-    const loData = Object.entries(byLO)
-      .map(([name, d]) => ({ name, units: d.units, volume: d.volume }))
-      .sort((a, b) => b.volume - a.volume)
-      .slice(0, 25);
-
-    const lockData = Object.entries(byLock)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-
-    const rateOrder = ["<5%", "5-5.5%", "5.5-6%", "6-6.5%", "6.5-7%", "7-7.5%", "7.5-8%", ">8%"];
-    const rateData = rateOrder.map((name) => ({ name, units: rateRanges[name] || 0 })).filter(d => d.units > 0);
-
-    const amtOrder = ["<$200K", "$200-300K", "$300-400K", "$400-500K", "$500-750K", "$750K-1M", ">$1M"];
-    const amountData = amtOrder.map((name) => ({ name, units: amountRanges[name] || 0 })).filter(d => d.units > 0);
-
-    const trendData = Object.entries(monthlyTrend)
-      .map(([name, d]) => ({ name, units: d.units, volume: d.volume }))
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(-12);
-
-    const lienData = Object.entries(byLien).map(([name, value]) => ({ name, value }));
-
-    // Top state
-    const topState = stateData[0];
-    const topStatePercent = topState ? ((topState.volume / totalVolume) * 100).toFixed(1) : "0";
-
-    // Avg rate
-    const rates = filteredRows.map(r => parseFloat(pf(r.fields || {}, "Loan.NoteRatePercent", "3") || "0")).filter(r => r > 0);
-    const avgRate = rates.length ? (rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(2) : "0";
-
-    // Purchase vs refi split
-    const purchaseCount = byPurpose["Purchase"]?.units || 0;
-    const purchasePercent = totalUnits ? ((purchaseCount / totalUnits) * 100).toFixed(1) : "0";
-
-    // Avg loan amount by program
-    const avgByProgram = programData.map(d => ({
-      name: d.name, avgAmount: d.units > 0 ? Math.round(d.volume / d.units) : 0, units: d.units,
-    }));
-
-    // Volume by milestone (for stacked bar)
-    const milestoneVolData = milestoneData.map(d => ({
-      name: d.name.length > 16 ? d.name.slice(0, 14) + "..." : d.name, units: d.units, volume: d.volume,
-    }));
-
-    // Rate by program
-    const rateByProgram: Record<string, { total: number; count: number }> = {};
-    filteredRows.forEach(r => {
-      const f = r.fields || {};
-      const rate = parseFloat(pf(f, "Loan.NoteRatePercent", "3") || "0") || 0;
-      const program = f["Loan.LoanProgram"] || "Other";
-      let pType = "Other";
-      const pl = program.toLowerCase();
-      if (pl.includes("fha")) pType = "FHA";
-      else if (pl.includes("va ") || pl.startsWith("va")) pType = "VA";
-      else if (pl.includes("usda")) pType = "USDA";
-      else if (pl.includes("jumbo")) pType = "Jumbo";
-      else if (pl.includes("conv") || pl.includes("fannie") || pl.includes("freddie") || pl.includes("agency")) pType = "Conventional";
-      if (rate > 0) {
-        if (!rateByProgram[pType]) rateByProgram[pType] = { total: 0, count: 0 };
-        rateByProgram[pType].total += rate;
-        rateByProgram[pType].count++;
-      }
-    });
-    const avgRateByProgram = Object.entries(rateByProgram)
-      .map(([name, d]) => ({ name, avgRate: parseFloat((d.total / d.count).toFixed(3)) }))
-      .sort((a, b) => b.avgRate - a.avgRate);
-
-    // State + Purpose cross-tab (top 10 states)
-    const topStatesForCross = stateData.slice(0, 10).map(s => s.name);
-    const statePurposeData: Array<Record<string, unknown>> = [];
-    topStatesForCross.forEach(st => {
-      const entry: Record<string, unknown> = { name: st };
-      filteredRows.forEach(r => {
-        const f = r.fields || {};
-        if (pf(f, "Loan.SubjectPropertyState", "14") === st) {
-          const purp = f["Loan.LoanPurpose"] || "Other";
-          entry[purp] = ((entry[purp] as number) || 0) + 1;
-        }
-      });
-      statePurposeData.push(entry);
-    });
-    const allPurposes = [...new Set(filteredRows.map(r => r.fields?.["Loan.LoanPurpose"] || "Other"))];
-
-    // LO performance table data
-    const loTableData = loData.map(d => ({
-      ...d,
-      avgLoan: d.units > 0 ? Math.round(d.volume / d.units) : 0,
-      pct: totalVolume > 0 ? parseFloat(((d.volume / totalVolume) * 100).toFixed(1)) : 0,
-    }));
-
-    return {
-      totalUnits, totalVolume, milestoneData, stateData, programData, purposeData,
-      loData, lockData, rateData, amountData, trendData, lienData,
-      topState: topState?.name || "--", topStatePercent, avgRate, purchasePercent,
-      byStateMap: byState, avgByProgram, milestoneVolData, avgRateByProgram,
-      statePurposeData, allPurposes, loTableData,
-    };
-  }, [filteredRows]);
 
   // AI Insight
   const getInsight = async (chartName: string, data: unknown) => {
@@ -574,10 +277,19 @@ export default function IntelligencePage() {
     URL.revokeObjectURL(url);
   };
 
-  const toggleSection = (s: Section) => setExpandedSection(expandedSection === s ? null : s);
+  const toggleSection = (s: Section) => {
+    const isOpening = expandedSection !== s;
+    setExpandedSection(expandedSection === s ? null : s);
+    if (isOpening) {
+      // Scroll the section header to top of viewport after render
+      setTimeout(() => {
+        document.getElementById(`section-${s}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 50);
+    }
+  };
 
   const SectionHeader = ({ id, title, icon: Icon, subtitle }: { id: Section; title: string; icon: React.ElementType; subtitle: string }) => (
-    <button onClick={() => toggleSection(id)} className="w-full flex items-center justify-between p-4 glass-card mb-1 hover:bg-[var(--bg-secondary)] transition-colors">
+    <button id={`section-${id}`} onClick={() => toggleSection(id)} className="w-full flex items-center justify-between p-4 glass-card mb-1 hover:bg-[var(--bg-secondary)] transition-colors scroll-mt-4">
       <div className="flex items-center gap-3">
         <Icon className="w-5 h-5 text-[var(--accent)]" />
         <div className="text-left">
@@ -643,21 +355,11 @@ export default function IntelligencePage() {
     );
   };
 
-  // Poll for warmup completion: re-fetch when server has more data than we do
+  // Auto-refetch if data seems stale (every 5 min)
   useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch("/api/pipeline/stats");
-        const status = await res.json();
-        setWarmingProgress(status.loadedSoFar || 0);
-        // Re-fetch if server has significantly more data than we have
-        if (status.state === "ready" && status.totalRows > rows.length + 100) {
-          fetchAll(true);
-        }
-      } catch { /* ignore */ }
-    }, 5000);
+    const interval = setInterval(() => fetchAll(), 5 * 60_000);
     return () => clearInterval(interval);
-  }, [rows.length, fetchAll]);
+  }, [fetchAll]);
 
   if (loading) {
     return (
@@ -665,9 +367,7 @@ export default function IntelligencePage() {
         <Loader2 className="w-10 h-10 animate-spin text-[var(--accent)]" />
         <p className="text-sm text-[var(--text-muted)]">Loading pipeline data for analytics...</p>
         <p className="text-xs text-[var(--text-muted)]">
-          {warmingProgress > 0
-            ? `${warmingProgress.toLocaleString()} loans loaded so far...`
-            : "Waiting for cache to warm up"}
+          Loading from database...
         </p>
       </div>
     );
@@ -832,12 +532,41 @@ export default function IntelligencePage() {
                                     )}
                                   </LineChart>
                                 </ResponsiveContainer>
+                              ) : chart.type === "stacked-bar" || chart.type === "grouped-bar" ? (
+                                <ResponsiveContainer width="100%" height={Math.max(280, 40 + (chart.seriesKeys?.length || 1) * 8)}>
+                                  <BarChart data={chart.data} margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                    <XAxis dataKey={chart.nameKey || "name"} tick={{ fontSize: 10 }} />
+                                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtAiValue(v, chart.formatValue) as string} />
+                                    <Tooltip formatter={(v) => fmtAiValue(v, chart.formatValue)} />
+                                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                                    {(chart.seriesKeys || []).map((key, idx) => (
+                                      <Bar key={key} dataKey={key} name={key} fill={COLORS[idx % COLORS.length]}
+                                        stackId={chart.type === "stacked-bar" ? "stack" : undefined}
+                                        radius={chart.type === "stacked-bar" ? undefined : [4, 4, 0, 0]} />
+                                    ))}
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              ) : chart.type === "multi-line" ? (
+                                <ResponsiveContainer width="100%" height={280}>
+                                  <LineChart data={chart.data} margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                    <XAxis dataKey={chart.nameKey || "name"} tick={{ fontSize: 10 }} />
+                                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => fmtAiValue(v, chart.formatValue) as string} />
+                                    <Tooltip formatter={(v) => fmtAiValue(v, chart.formatValue)} />
+                                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                                    {(chart.seriesKeys || []).map((key, idx) => (
+                                      <Line key={key} type="monotone" dataKey={key} name={key}
+                                        stroke={COLORS[idx % COLORS.length]} strokeWidth={2} dot={{ r: 2 }} />
+                                    ))}
+                                  </LineChart>
+                                </ResponsiveContainer>
                               ) : chart.type === "horizontal-bar" ? (
-                                <ResponsiveContainer width="100%" height={Math.max(200, chart.data.length * 28)}>
-                                  <BarChart data={chart.data} layout="vertical" margin={{ left: 80, right: 20 }}>
+                                <ResponsiveContainer width="100%" height={Math.max(200, chart.data.length * 28 + 40)}>
+                                  <BarChart data={chart.data} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                                     <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtAiValue(v, chart.formatValue) as string} />
-                                    <YAxis type="category" dataKey={chart.nameKey || "name"} tick={{ fontSize: 10 }} width={75} />
+                                    <YAxis type="category" dataKey={chart.nameKey || "name"} tick={{ fontSize: 10 }} width={130} />
                                     <Tooltip formatter={(v) => fmtAiValue(v, chart.formatValue)} />
                                     <Bar dataKey={chart.dataKey || "value"} radius={[0, 4, 4, 0]}>
                                       {chart.data.map((_, idx) => <Cell key={idx} fill={COLORS[idx % COLORS.length]} />)}
@@ -886,12 +615,8 @@ export default function IntelligencePage() {
               {activeFilterCount > 0 && (
                 <span className="px-1.5 py-0.5 bg-[var(--accent)] text-white text-xs rounded-full">{activeFilterCount}</span>
               )}
+              {refreshing && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--accent)]" />}
             </div>
-            {activeFilterCount > 0 && (
-              <button onClick={clearFilters} className="flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-red-500">
-                <RotateCcw className="w-3 h-3" /> Clear all
-              </button>
-            )}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
             <select value={filterState} onChange={(e) => setFilterState(e.target.value)} className="text-xs border border-[var(--border)] rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-[var(--accent)]">
@@ -928,7 +653,7 @@ export default function IntelligencePage() {
             </div>
           </div>
           {activeFilterCount > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
               {filterState && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-50 border border-orange-200 rounded text-xs"><MapPin className="w-3 h-3" />{filterState}<button onClick={() => setFilterState("")}><X className="w-3 h-3" /></button></span>}
               {filterLO && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 border border-blue-200 rounded text-xs"><Users className="w-3 h-3" />{filterLO}<button onClick={() => setFilterLO("")}><X className="w-3 h-3" /></button></span>}
               {filterMilestone && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded text-xs">{filterMilestone}<button onClick={() => setFilterMilestone("")}><X className="w-3 h-3" /></button></span>}
@@ -937,13 +662,19 @@ export default function IntelligencePage() {
               {filterLock && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-cyan-50 border border-cyan-200 rounded text-xs">{filterLock}<button onClick={() => setFilterLock("")}><X className="w-3 h-3" /></button></span>}
               {filterDateFrom && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded text-xs"><Clock className="w-3 h-3" />From {filterDateFrom}<button onClick={() => setFilterDateFrom("")}><X className="w-3 h-3" /></button></span>}
               {filterDateTo && <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded text-xs"><Clock className="w-3 h-3" />To {filterDateTo}<button onClick={() => setFilterDateTo("")}><X className="w-3 h-3" /></button></span>}
-              <span className="text-xs text-[var(--text-muted)] self-center ml-1">Showing {filteredRows.length} of {rows.length.toLocaleString()} loans{cacheAge > 0 ? ` (updated ${Math.floor(cacheAge / 60000)} min ago)` : ""}</span>
+              <button
+                onClick={() => { setFilterState(""); setFilterLO(""); setFilterMilestone(""); setFilterProgram(""); setFilterPurpose(""); setFilterLock(""); setFilterDateFrom(""); setFilterDateTo(""); }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 border border-red-200 rounded text-xs text-red-600 hover:bg-red-100 transition-colors font-medium"
+              >
+                <X className="w-3 h-3" /> Clear All
+              </button>
+              <span className="text-xs text-[var(--text-muted)] self-center ml-1">{stats.totalUnits.toLocaleString()} loans{cacheAge > 0 ? ` (updated ${Math.floor(cacheAge / 60000)} min ago)` : ""}</span>
             </div>
           )}
         </div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-4 sm:mb-6">
+        <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-4 sm:mb-6 transition-opacity duration-200 ${refreshing ? "opacity-50" : ""}`}>
           <div className="glass-card p-4">
             <div className="flex items-center gap-2 mb-1">
               <FileText className="w-4 h-4 text-[var(--accent)]" />
@@ -1088,11 +819,11 @@ export default function IntelligencePage() {
               <h3 className="text-sm font-semibold mb-1">Pipeline by Milestone</h3>
               <p className="text-xs text-[var(--text-muted)] mb-3">{fmtCurrencyShort(stats.totalVolume)} | {stats.totalUnits} Units</p>
               <ChartActions id="milestone" data={stats.milestoneData} />
-              <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={stats.milestoneData} layout="vertical" margin={{ left: 100, right: 20 }}>
+              <ResponsiveContainer width="100%" height={Math.max(320, stats.milestoneData.length * 28 + 40)}>
+                <BarChart data={stats.milestoneData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis type="number" tick={{ fontSize: 11 }} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={95} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={130} />
                   <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey="units" name="Units" fill="#EA580C" radius={[0, 4, 4, 0]} />
                 </BarChart>
@@ -1105,11 +836,11 @@ export default function IntelligencePage() {
               <h3 className="text-sm font-semibold mb-1">Volume by State (Top 20)</h3>
               <p className="text-xs text-[var(--text-muted)] mb-3">{stats.topStatePercent}% {stats.topState}</p>
               <ChartActions id="state-vol" data={stats.stateData} formatValue="currency" />
-              <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={stats.stateData} layout="vertical" margin={{ left: 30, right: 20 }}>
+              <ResponsiveContainer width="100%" height={Math.max(320, stats.stateData.length * 28 + 40)}>
+                <BarChart data={stats.stateData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => fmtCurrencyShort(v)} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={28} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={35} />
                   <Tooltip content={<CustomTooltip />} formatter={(v) => fmtCurrencyShort(Number(v))} />
                   <Bar dataKey="volume" name="Volume" radius={[0, 4, 4, 0]}>
                     {stats.stateData.map((_, i) => (
@@ -1257,11 +988,11 @@ export default function IntelligencePage() {
               <h3 className="text-sm font-semibold mb-1">Volume by LO (Top 25)</h3>
               <p className="text-xs text-[var(--text-muted)] mb-3">{fmtCurrencyShort(stats.totalVolume)} | {stats.totalUnits} Units</p>
               <ChartActions id="lo-volume" data={stats.loData} formatValue="currency" />
-              <ResponsiveContainer width="100%" height={500}>
-                <BarChart data={stats.loData} layout="vertical" margin={{ left: 120, right: 20 }}>
+              <ResponsiveContainer width="100%" height={Math.max(500, stats.loData.length * 24 + 40)}>
+                <BarChart data={stats.loData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCurrencyShort(v)} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={115} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={140} />
                   <Tooltip content={<CustomTooltip />} formatter={(v) => fmtCurrencyShort(Number(v))} />
                   <Bar dataKey="volume" name="Volume" radius={[0, 4, 4, 0]}>
                     {stats.loData.map((_, i) => (
@@ -1278,11 +1009,11 @@ export default function IntelligencePage() {
               <h3 className="text-sm font-semibold mb-1">Units by LO (Top 25)</h3>
               <p className="text-xs text-[var(--text-muted)] mb-3">{fmtCurrencyShort(stats.totalVolume)} | {stats.totalUnits} Units</p>
               <ChartActions id="lo-units" data={stats.loData} />
-              <ResponsiveContainer width="100%" height={500}>
-                <BarChart data={stats.loData} layout="vertical" margin={{ left: 120, right: 20 }}>
+              <ResponsiveContainer width="100%" height={Math.max(500, stats.loData.length * 24 + 40)}>
+                <BarChart data={stats.loData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis type="number" tick={{ fontSize: 10 }} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={115} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={140} />
                   <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey="units" name="Units" radius={[0, 4, 4, 0]}>
                     {stats.loData.map((_, i) => (
@@ -1396,11 +1127,11 @@ export default function IntelligencePage() {
               <h3 className="text-sm font-semibold mb-1">Volume by Milestone</h3>
               <p className="text-xs text-[var(--text-muted)] mb-3">Units and volume per stage</p>
               <ChartActions id="ms-volume" data={stats.milestoneVolData} formatValue="currency" />
-              <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={stats.milestoneVolData} layout="vertical" margin={{ left: 100, right: 20 }}>
+              <ResponsiveContainer width="100%" height={Math.max(320, stats.milestoneVolData.length * 28 + 40)}>
+                <BarChart data={stats.milestoneVolData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCurrencyShort(v)} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={95} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={130} />
                   <Tooltip formatter={(v, name) => name === "Volume" ? fmtCurrencyShort(Number(v)) : v} />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
                   <Bar dataKey="volume" name="Volume" fill="#EA580C" radius={[0, 4, 4, 0]} />

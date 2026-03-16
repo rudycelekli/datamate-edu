@@ -20,7 +20,6 @@ import {
   getPipelineCache,
   setPipelineCache,
   isPipelineFresh,
-  setWarmingStatus,
 } from "@/lib/pipeline-store";
 import AppHeader from "@/components/AppHeader";
 
@@ -46,8 +45,6 @@ interface PipelineResponse {
   pageSize: number;
   cacheAge: number;
   filterOptions: FilterOptions;
-  _warming?: boolean;
-  _loadedSoFar?: number;
 }
 
 type SortDir = "asc" | "desc";
@@ -138,8 +135,6 @@ export default function PipelinePage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const [isWarming, setIsWarming] = useState(() => getPipelineCache().data?._warming || false);
-  const [loadedSoFar, setLoadedSoFar] = useState(() => getPipelineCache().data?._loadedSoFar || 0);
   const pageSize = 50;
 
   // AI search
@@ -201,19 +196,10 @@ export default function PipelinePage() {
       if (!res.ok) throw new Error(await res.text());
       const data: PipelineResponse = await res.json();
 
-      // Never replace good data with partial warming data
-      if (data._warming && hasData && total > (data.total || 0)) {
-        setIsWarming(true);
-        setLoadedSoFar(data._loadedSoFar || 0);
-        return; // Keep existing data, just update warming status
-      }
-
       setRows(data.rows || []);
       setTotal(data.total || 0);
       setTotalVolume(data.totalVolume || 0);
       setCacheAge(data.cacheAge || 0);
-      setIsWarming(!!data._warming);
-      setLoadedSoFar(data._loadedSoFar || 0);
       if (data.filterOptions) setFilterOptions(data.filterOptions);
 
       // Persist in shared store for instant restore on navigation
@@ -230,23 +216,25 @@ export default function PipelinePage() {
     fetchPipeline();
   }, [fetchPipeline]);
 
-  // Poll for warmup progress every 5s while cache is warming
+  // Supabase Realtime: refetch when pipeline_loans changes
   useEffect(() => {
-    if (!isWarming) return;
-    const interval = setInterval(async () => {
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return;
+    let debounceTimer: ReturnType<typeof setTimeout>;
+    import("@/lib/supabase").then(({ createBrowserClient }) => {
       try {
-        const res = await fetch("/api/pipeline/stats");
-        const status = await res.json();
-        setLoadedSoFar(status.loadedSoFar || 0);
-        setWarmingStatus(status.state !== "ready", status.loadedSoFar || 0, undefined, status.total);
-        if (status.state === "ready") {
-          setIsWarming(false);
-          fetchPipeline(true); // Force refresh to get full cached data
-        }
-      } catch { /* ignore */ }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [isWarming, fetchPipeline]);
+        const client = createBrowserClient();
+        const channel = client
+          .channel("pipeline-changes")
+          .on("postgres_changes", { event: "*", schema: "public", table: "pipeline_loans" }, () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => fetchPipeline(true), 2000);
+          })
+          .subscribe();
+        return () => { client.removeChannel(channel); };
+      } catch { /* Supabase public keys not configured */ }
+    });
+    return () => { clearTimeout(debounceTimer); };
+  }, [fetchPipeline]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -265,7 +253,23 @@ export default function PipelinePage() {
       const res = await fetch("/api/ai-search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: aiQuery }),
+        body: JSON.stringify({
+          query: aiQuery,
+          filters: {
+            milestone: milestoneFilter || undefined,
+            lo: loFilter || undefined,
+            state: stateFilter || undefined,
+            purpose: purposeFilter || undefined,
+            lock: lockFilter || undefined,
+            program: programFilter || undefined,
+            amountMin: amountMin || undefined,
+            amountMax: amountMax || undefined,
+            rateMin: rateMin || undefined,
+            rateMax: rateMax || undefined,
+            dateFrom: dateFrom || undefined,
+            dateTo: dateTo || undefined,
+          },
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "AI search failed");

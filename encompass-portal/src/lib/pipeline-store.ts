@@ -24,8 +24,6 @@ interface PipelineCache {
   totalVolume: number;
   cacheAge: number;
   filterOptions: FilterOptions;
-  _warming?: boolean;
-  _loadedSoFar?: number;
 }
 
 interface CompactRow {
@@ -105,8 +103,6 @@ export function setPipelineCache(data: PipelineCache, params: string) {
 export function isPipelineFresh(params: string): boolean {
   const cache = getPipelineCache(); // triggers restore if needed
   if (!cache.data) return false;
-  // Warming/partial data is never "fresh" — always re-fetch once full cache is ready
-  if (cache.data._warming) return false;
   return _pipelineParams === params && (Date.now() - _pipelineFetchTime) < STALE_MS;
 }
 
@@ -158,44 +154,6 @@ export function setMarketCache(data: typeof _marketCache) {
 export function isMarketFresh(): boolean {
   getMarketCache(); // triggers restore
   return _marketCache !== null && (Date.now() - _marketFetchTime) < STALE_MS;
-}
-
-// ── Global warming / pipeline status (visible across all tabs) ──
-
-let _warmingStatus = false;
-let _warmingLoadedSoFar = 0;
-let _warmingCacheAge = 0;
-let _warmingTotal = 0;
-
-export function getWarmingStatus() {
-  // Restore from sessionStorage if blank
-  if (!_warmingTotal && !_pipelineCache) {
-    const stored = ssGet<{ warming: boolean; loadedSoFar: number; cacheAge: number; total: number }>("warming_status");
-    if (stored) {
-      _warmingStatus = stored.warming;
-      _warmingLoadedSoFar = stored.loadedSoFar;
-      _warmingCacheAge = stored.cacheAge;
-      _warmingTotal = stored.total;
-    }
-  }
-  // Prefer pipeline cache if it has data
-  if (_pipelineCache) {
-    return {
-      warming: !!_pipelineCache._warming,
-      loadedSoFar: _pipelineCache._loadedSoFar || _warmingLoadedSoFar,
-      cacheAge: _pipelineCache.cacheAge || _warmingCacheAge,
-      total: _pipelineCache.total || _warmingTotal,
-    };
-  }
-  return { warming: _warmingStatus, loadedSoFar: _warmingLoadedSoFar, cacheAge: _warmingCacheAge, total: _warmingTotal };
-}
-
-export function setWarmingStatus(warming: boolean, loadedSoFar: number, cacheAge?: number, total?: number) {
-  _warmingStatus = warming;
-  _warmingLoadedSoFar = loadedSoFar;
-  if (cacheAge !== undefined) _warmingCacheAge = cacheAge;
-  if (total !== undefined) _warmingTotal = total;
-  ssSet("warming_status", { warming: _warmingStatus, loadedSoFar: _warmingLoadedSoFar, cacheAge: _warmingCacheAge, total: _warmingTotal });
 }
 
 // ── Connection status (shared across all pages) ──
