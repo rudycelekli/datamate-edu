@@ -18,6 +18,7 @@ interface Message {
   content: string;
   docs?: string[];
   phase?: string;
+  compressed?: boolean;
 }
 
 interface ChartConfig {
@@ -457,6 +458,7 @@ export default function MiloPage() {
       const decoder = new TextDecoder();
       let accumulated = "";
       let docs: string[] = [];
+      let compressed = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -473,6 +475,12 @@ export default function MiloPage() {
           }
         }
 
+        // Parse compression flag
+        if (accumulated.includes("<!--COMPRESSED-->")) {
+          compressed = true;
+          accumulated = accumulated.replace(/<!--COMPRESSED-->/, "");
+        }
+
         // Parse phase indicator
         if (accumulated.includes("<!--PHASE:") && accumulated.includes("-->")) {
           const phaseMatch = accumulated.match(/<!--PHASE:(.*?)-->/);
@@ -484,7 +492,7 @@ export default function MiloPage() {
 
         setMessages(prev => {
           const copy = [...prev];
-          copy[copy.length - 1] = { role: "assistant", content: accumulated, docs };
+          copy[copy.length - 1] = { role: "assistant", content: accumulated, docs, compressed };
           return copy;
         });
       }
@@ -589,14 +597,19 @@ export default function MiloPage() {
               {messages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   <div className={`max-w-[85%] ${msg.role === "user" ? "order-1" : ""}`}>
-                    {/* Doc badges */}
-                    {msg.role === "assistant" && msg.docs && msg.docs.length > 0 && (
+                    {/* Doc badges + compression indicator */}
+                    {msg.role === "assistant" && (msg.docs && msg.docs.length > 0 || msg.compressed) && (
                       <div className="flex flex-wrap gap-1 mb-1.5 ml-1">
-                        {msg.docs.map((doc, di) => (
+                        {msg.docs?.map((doc, di) => (
                           <span key={di} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full text-[10px] font-medium">
                             <BookOpen className="w-2.5 h-2.5" />{doc}
                           </span>
                         ))}
+                        {msg.compressed && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[10px] font-medium border border-amber-200" title="El historial de la conversacion fue comprimido automaticamente para optimizar el contexto">
+                            ⚡ contexto comprimido
+                          </span>
+                        )}
                       </div>
                     )}
 

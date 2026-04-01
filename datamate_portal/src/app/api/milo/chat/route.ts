@@ -78,18 +78,69 @@ interface ChatMessage {
   content: string;
 }
 
-/** Build API messages with PDF document blocks attached to first user message */
+// ── Context compression ───────────────────────────────────────────────────────
+// Trigger summarization when accumulated message text exceeds ~30k tokens
+const CONTEXT_COMPRESS_CHARS = 120_000;
+// Always keep the last N messages verbatim (= 2 full exchanges)
+const KEEP_RECENT_MESSAGES = 4;
+
+/**
+ * Compress older messages into a single summary using Haiku (cheap + fast).
+ * Returns a synthetic assistant message containing the summary, or null on failure.
+ */
+async function summarizeOldMessages(messages: ChatMessage[]): Promise<ChatMessage | null> {
+  if (!ANTHROPIC_API_KEY || messages.length === 0) return null;
+
+  const transcript = messages
+    .map(m => `[${m.role.toUpperCase()}]\n${m.content}`)
+    .join("\n\n---\n\n");
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 2000,
+        system: "Eres un asistente que resume conversaciones de analisis financiero educativo. Sé conciso pero preserva todos los datos especificos importantes.",
+        messages: [{
+          role: "user",
+          content: `Resume esta conversacion previa de forma concisa en español. Preserva: (1) todos los sost_id, periodos, valores numericos y nombres de sostenedores mencionados, (2) las conclusiones clave del analisis, (3) las queries SQL mas importantes y sus resultados clave, (4) el contexto general de lo que se esta investigando. El resumen sera usado como contexto para continuar la conversacion.\n\nCONVERSACION:\n${transcript}`,
+        }],
+      }),
+    });
+
+    if (!res.ok) return null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json = await res.json() as any;
+    const summaryText = (json.content?.[0]?.text as string) || "";
+    if (!summaryText) return null;
+
+    return {
+      role: "assistant",
+      content: `[Resumen de conversacion anterior — contexto comprimido automaticamente]\n\n${summaryText}`,
+    };
+  } catch {
+    return null; // never crash the main flow
+  }
+}
+
+/** Build API messages with PDF document blocks attached to the FIRST user message.
+ *  Works correctly whether or not a summary message has been prepended. */
 function buildApiMessages(messages: ChatMessage[], docs: DocMeta[]) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const apiMessages: any[] = [];
+  let docsAttached = false;
 
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-
-    if (msg.role === "user" && i === 0) {
+  for (const msg of messages) {
+    if (msg.role === "user" && !docsAttached) {
+      docsAttached = true;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const contentBlocks: any[] = [];
-
       for (const doc of docs) {
         const b64 = loadDocBase64(doc.filename);
         if (b64) {
@@ -100,7 +151,6 @@ function buildApiMessages(messages: ChatMessage[], docs: DocMeta[]) {
           });
         }
       }
-
       contentBlocks.push({ type: "text", text: msg.content });
       apiMessages.push({ role: "user", content: contentBlocks });
     } else {
@@ -210,13 +260,30 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ── Context compression ─────────────────────────────────────────────────────
+  // If total message text exceeds threshold, summarize older messages with Haiku
+  // to prevent hitting the 200k token context limit on long data-heavy sessions.
+  const totalChars = messages.reduce((s, m) => s + m.content.length, 0);
+  let effectiveMessages = messages;
+  let wasCompressed = false;
+
+  if (totalChars > CONTEXT_COMPRESS_CHARS && messages.length > KEEP_RECENT_MESSAGES + 2) {
+    const toSummarize = messages.slice(0, -KEEP_RECENT_MESSAGES);
+    const recent = messages.slice(-KEEP_RECENT_MESSAGES);
+    const summary = await summarizeOldMessages(toSummarize);
+    if (summary) {
+      effectiveMessages = [summary, ...recent];
+      wasCompressed = true;
+    }
+  }
+
   // Route to relevant education documents
-  const lastUserMsg = [...messages].reverse().find(m => m.role === "user")?.content || "";
-  const conversationCtx = messages.map(m => m.content).join(" ");
+  const lastUserMsg = [...effectiveMessages].reverse().find(m => m.role === "user")?.content || "";
+  const conversationCtx = effectiveMessages.map(m => m.content).join(" ");
   const { directBatch } = routeDocsMultiBatch(lastUserMsg, conversationCtx);
   const allDocNames = directBatch.map(d => d.topic);
 
-  const apiMessages = buildApiMessages(messages, directBatch);
+  const apiMessages = buildApiMessages(effectiveMessages, directBatch);
 
   const systemPrompt = SYSTEM_PROMPT + (educationContext
     ? `\n\n## Datos Educativos Actuales\nTienes acceso a los datos educativos actuales. Cuando pregunten sobre gastos, sostenedores o el portafolio, referencia estos datos:\n\n${educationContext}`
@@ -227,6 +294,9 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       controller.enqueue(encoder.encode(`<!--DOCS:${JSON.stringify(allDocNames)}-->`));
+      if (wasCompressed) {
+        controller.enqueue(encoder.encode(`<!--COMPRESSED-->`));
+      }
 
       // Agentic loop: Claude can call query_database multiple times
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
