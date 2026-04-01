@@ -80,11 +80,13 @@ export async function executeSql(sql: string): Promise<SqlResult> {
     return { data: [], rowCount: 0, truncated: false, error: validation.error, executionMs: 0 };
   }
 
+  // Always strip trailing semicolons — they cause syntax errors inside the RPC format wrapper
+  let safeSql = sql.trim().replace(/;\s*$/, "");
+
   // Ensure LIMIT is present to prevent runaway queries
-  const normalizedLower = sql.trim().toLowerCase();
-  let safeSql = sql.trim();
+  const normalizedLower = safeSql.toLowerCase();
   if (!normalizedLower.includes("limit")) {
-    safeSql = safeSql.replace(/;?\s*$/, ` LIMIT ${MAX_ROWS}`);
+    safeSql = `${safeSql} LIMIT ${MAX_ROWS}`;
   }
 
   try {
@@ -103,12 +105,17 @@ export async function executeSql(sql: string): Promise<SqlResult> {
           data: [],
           rowCount: 0,
           truncated: false,
-          error: "Consulta excedio el tiempo limite (60s). Intenta agregar filtros mas estrictos (WHERE sost_id = 'X' o WHERE periodo = 'YYYY') o usar GROUP BY para reducir el volumen de datos.",
+          error: "Consulta excedio el tiempo limite (60s). Usa WHERE sost_id = 'X' o WHERE periodo = 'YYYY' para filtrar, o prefiere las vistas mv_sostenedor_* que son pre-calculadas.",
           executionMs: Date.now() - start,
         };
       }
-      // Try fallback for other errors
-      return await executeSqlFallback(safeSql, start);
+      // For other errors, try fallback but also expose the RPC error
+      const fallback = await executeSqlFallback(safeSql, start);
+      if (fallback.error) {
+        // Both RPC and fallback failed — return the RPC error (more informative)
+        return { ...fallback, error: `RPC: ${msg} | Fallback: ${fallback.error}` };
+      }
+      return fallback;
     }
 
     const rows = Array.isArray(data) ? data : [];
@@ -156,11 +163,28 @@ async function executeSqlFallback(sql: string, startTime: number): Promise<SqlRe
       };
     }
 
-    const [, columns, table, , , , limitStr] = selectMatch;
+    const [, columns, table, whereClause, , orderClause, limitStr] = selectMatch;
     const limit = limitStr ? parseInt(limitStr) : MAX_ROWS;
 
     const selectCols = columns.trim() === "*" ? "*" : columns.trim();
-    const query = db.from(table).select(selectCols).limit(Math.min(limit, MAX_ROWS));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = db.from(table).select(selectCols).limit(Math.min(limit, MAX_ROWS));
+
+    // Apply simple equality WHERE clauses (col = 'val' or col = num)
+    if (whereClause) {
+      const eqMatches = whereClause.matchAll(/(\w+)\s*=\s*'([^']+)'/g);
+      for (const m of eqMatches) query = query.eq(m[1], m[2]);
+      const eqNumMatches = whereClause.matchAll(/(\w+)\s*=\s*(\d+(?:\.\d+)?)/g);
+      for (const m of eqNumMatches) query = query.eq(m[1], m[2]);
+    }
+
+    // Apply ORDER BY for single-column sorts
+    if (orderClause) {
+      const orderMatch = orderClause.match(/^(\w+)(?:\s+(asc|desc))?/i);
+      if (orderMatch) {
+        query = query.order(orderMatch[1], { ascending: (orderMatch[2] || "asc").toLowerCase() === "asc" });
+      }
+    }
 
     const { data, error } = await query;
 
