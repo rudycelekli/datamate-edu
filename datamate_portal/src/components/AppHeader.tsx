@@ -10,7 +10,7 @@ import {
   setConnectedStatus,
 } from "@/lib/education-store";
 
-type TabId = "sostenedores" | "perfiles" | "intelligence" | "milo" | "alertas" | "gna";
+type TabId = "perfiles" | "intelligence" | "milo" | "alertas" | "gna";
 
 interface AppHeaderProps {
   activeTab: TabId;
@@ -26,7 +26,6 @@ const formatSyncAge = (ms: number) => {
 };
 
 const TABS: { id: TabId; label: string; href: string; icon?: React.ReactNode }[] = [
-  { id: "sostenedores", label: "Datos", href: "/" },
   { id: "perfiles", label: "Perfiles Fiscales", href: "/sostenedor", icon: <Database className="w-3 sm:w-3.5 h-3 sm:h-3.5" /> },
   { id: "intelligence", label: "Inteligencia", href: "/intelligence", icon: <BarChart3 className="w-3 sm:w-3.5 h-3 sm:h-3.5" /> },
   { id: "milo", label: "EduBot", href: "/milo", icon: <Sparkles className="w-3 sm:w-3.5 h-3 sm:h-3.5" /> },

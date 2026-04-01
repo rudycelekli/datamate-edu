@@ -566,39 +566,39 @@ export async function getRiskFlags(params: {
 
     // Indicator #4: Admin Concentration (weight: 40%)
     const adminRatio = data.totalGastos > 0 ? (data.adminGasto / data.totalGastos) * 100 : 0;
-    if (adminRatio > 50) {
-      flags.push({ indicator: "#4 Concentracion Administrativa", value: adminRatio, threshold: ">50%", level: "CRITICAL", detail: `Gasto admin es ${adminRatio.toFixed(1)}% del total` });
+    if (adminRatio > 30) {
+      flags.push({ indicator: "#4 Concentracion Administrativa", value: adminRatio, threshold: ">30%", level: "CRITICAL", detail: `Gasto admin es ${adminRatio.toFixed(1)}% del total` });
       weightedScore += 40 * 1.0;
-    } else if (adminRatio > 35) {
-      flags.push({ indicator: "#4 Concentracion Administrativa", value: adminRatio, threshold: ">35%", level: "ALERT", detail: `Gasto admin es ${adminRatio.toFixed(1)}% del total` });
-      weightedScore += 40 * 0.6;
+    } else if (adminRatio > 20) {
+      flags.push({ indicator: "#4 Concentracion Administrativa", value: adminRatio, threshold: ">20%", level: "ALERT", detail: `Gasto admin es ${adminRatio.toFixed(1)}% del total` });
+      weightedScore += 40 * 0.5;
     }
 
     // Indicator #9: Payroll Ratio (weight: 35%)
     const remunTotal = remunBySost.get(sostId) || 0;
     const ingresoDepurado = data.totalIngresos;
     const payrollRatio = ingresoDepurado > 0 ? (remunTotal / ingresoDepurado) * 100 : 0;
-    if (payrollRatio > 95) {
-      flags.push({ indicator: "#9 Gasto Remuneracional", value: payrollRatio, threshold: ">95%", level: "CRITICAL", detail: `Remuneraciones son ${payrollRatio.toFixed(1)}% del ingreso depurado` });
+    if (payrollRatio > 85) {
+      flags.push({ indicator: "#9 Gasto Remuneracional", value: payrollRatio, threshold: ">85%", level: "CRITICAL", detail: `Remuneraciones son ${payrollRatio.toFixed(1)}% del ingreso depurado` });
       weightedScore += 35 * 1.0;
-    } else if (payrollRatio > 80) {
-      flags.push({ indicator: "#9 Gasto Remuneracional", value: payrollRatio, threshold: ">80%", level: "ALERT", detail: `Remuneraciones son ${payrollRatio.toFixed(1)}% del ingreso depurado` });
-      weightedScore += 35 * 0.6;
+    } else if (payrollRatio > 65) {
+      flags.push({ indicator: "#9 Gasto Remuneracional", value: payrollRatio, threshold: ">65%", level: "ALERT", detail: `Remuneraciones son ${payrollRatio.toFixed(1)}% del ingreso depurado` });
+      weightedScore += 35 * 0.5;
     }
 
     // Balance indicator (weight: 25%)
     const balance = data.totalIngresos - data.totalGastos;
     const deficitRatio = data.totalIngresos > 0 ? (balance / data.totalIngresos) * 100 : 0;
-    if (deficitRatio < -20) {
-      flags.push({ indicator: "Balance Deficitario", value: deficitRatio, threshold: ">20% deficit", level: "CRITICAL", detail: `Deficit de ${Math.abs(deficitRatio).toFixed(1)}% sobre ingresos` });
+    if (deficitRatio < -5) {
+      flags.push({ indicator: "Balance Deficitario", value: deficitRatio, threshold: ">5% deficit", level: "CRITICAL", detail: `Deficit de ${Math.abs(deficitRatio).toFixed(1)}% sobre ingresos` });
       weightedScore += 25 * 1.0;
-    } else if (balance < 0) {
-      flags.push({ indicator: "Balance Deficitario", value: deficitRatio, threshold: "deficit", level: "ALERT", detail: `Deficit de ${Math.abs(deficitRatio).toFixed(1)}% sobre ingresos` });
-      weightedScore += 25 * 0.6;
+    } else if (deficitRatio < 5) {
+      flags.push({ indicator: "Balance Ajustado", value: deficitRatio, threshold: "<5% margen", level: "ALERT", detail: `Margen sobre ingresos: ${deficitRatio.toFixed(1)}%` });
+      weightedScore += 25 * 0.5;
     }
 
     const riskScore = Math.min(100, Math.round(weightedScore));
-    const riskLevel: "CRITICAL" | "ALERT" | "OK" = riskScore > 70 ? "CRITICAL" : riskScore > 40 ? "ALERT" : "OK";
+    const riskLevel: "CRITICAL" | "ALERT" | "OK" = riskScore > 45 ? "CRITICAL" : riskScore > 15 ? "ALERT" : "OK";
 
     if (flags.length > 0) {
       allFlagged.push({
