@@ -125,8 +125,8 @@ export default function SostenedorPage() {
   // Load sostenedores list
   useEffect(() => {
     fetch("/api/sostenedor/profile")
-      .then(r => r.json())
-      .then(d => { setSummary(d); setLoading(false); })
+      .then(r => { if (!r.ok) throw new Error("API error"); return r.json(); })
+      .then(d => { if (d?.sostenedores) setSummary(d); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
@@ -177,7 +177,7 @@ export default function SostenedorPage() {
   };
 
   const latest = profile.length > 0 ? profile[profile.length - 1] : null;
-  const filteredSost = summary?.sostenedores.filter(s =>
+  const filteredSost = summary?.sostenedores?.filter(s =>
     !searchInput || s.nombre.toLowerCase().includes(searchInput.toLowerCase()) || s.sost_id.includes(searchInput)
   ) || [];
 
