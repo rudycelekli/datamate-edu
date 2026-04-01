@@ -280,7 +280,7 @@ export default function MineducPanel({ sostId }: { sostId: string }) {
                       <>
                         <span className="text-[10px] text-[var(--text-muted)]">·</span>
                         <span className="text-xs text-[var(--text-muted)]">Riesgo fiscal:</span>
-                        <span className={`text-xs font-mono font-semibold ${(s.risk_score_fiscal || 0) > 60 ? "text-red-600" : "text-emerald-600"}`}>{s.risk_score_fiscal}</span>
+                        <span className={`text-xs font-mono font-semibold ${(s.risk_score_fiscal || 0) > 45 ? "text-red-600" : (s.risk_score_fiscal || 0) > 15 ? "text-amber-600" : "text-emerald-600"}`}>{s.risk_score_fiscal}</span>
                       </>
                     )}
                   </div>
@@ -293,7 +293,7 @@ export default function MineducPanel({ sostId }: { sostId: string }) {
             ))}
           </div>
           <p className="text-[10px] text-[var(--text-muted)] mt-2">
-            ALERTA CRÍTICA: establecimientos con buen desempeño SNED (índice &gt;60) pero alto riesgo fiscal (&gt;60 puntos). Indica sostenedores pedagógicamente exitosos pero financieramente vulnerables.
+            ALERTA CRÍTICA: establecimientos con buen desempeño SNED (índice &gt;60) pero alto riesgo fiscal (score &gt;45). Indica sostenedores pedagógicamente exitosos pero financieramente vulnerables.
           </p>
         </div>
       )}

@@ -84,18 +84,18 @@ function recalculateIndicators(original: ProfileRow, simulated: Partial<ProfileR
   // Risk score recalculation
   let weightedScore = 0;
 
-  // #4 weight: 25%
-  if (ind4_admin_ratio > 50) weightedScore += 25;
-  else if (ind4_admin_ratio > 35) weightedScore += 15;
+  // #4 Admin weight: 40pts — CRITICO >30%, ALERTA >20%
+  if (ind4_admin_ratio > 30) weightedScore += 40;
+  else if (ind4_admin_ratio > 20) weightedScore += 20;
 
-  // #9 weight: 25%
-  if (ind9_payroll_ratio > 95) weightedScore += 25;
-  else if (ind9_payroll_ratio > 80) weightedScore += 15;
+  // #9 Payroll weight: 35pts — CRITICO >85%, ALERTA >65%
+  if (ind9_payroll_ratio > 85) weightedScore += 35;
+  else if (ind9_payroll_ratio > 65) weightedScore += 17;
 
-  // Balance weight: 20%
+  // Balance weight: 25pts — CRITICO <-5%, ALERTA <5%
   const deficitRatio = totalIngresos > 0 ? (balance / totalIngresos) * 100 : 0;
-  if (deficitRatio < -20) weightedScore += 20;
-  else if (balance < 0) weightedScore += 12;
+  if (deficitRatio < -5) weightedScore += 25;
+  else if (deficitRatio < 5) weightedScore += 12;
 
   // HHI weight: 15%
   if (ind11_hhi > 0.5) weightedScore += 15;
@@ -106,7 +106,7 @@ function recalculateIndicators(original: ProfileRow, simulated: Partial<ProfileR
   else if (ind10_innovacion_ratio < 5) weightedScore += 9;
 
   const risk_score = Math.min(100, weightedScore);
-  const risk_level = risk_score > 70 ? "CRITICO" : risk_score > 40 ? "ALERTA" : "OK";
+  const risk_level = risk_score > 45 ? "CRITICO" : risk_score > 15 ? "ALERTA" : "OK";
 
   return {
     ...simulated,

@@ -103,14 +103,14 @@ Columnas:
 1. **Indice de Complejidad Territorial Educativa** — Mide la dificultad operativa del territorio del sostenedor (ruralidad, dispersion, acceso)
 2. **Costo por alumno** — Gasto total / matricula. Permite comparar eficiencia entre sostenedores
 3. **Indice de contexto territorial del gasto** — Normaliza el gasto segun condiciones del territorio (IPC regional, ruralidad)
-4. **Indice de concentracion del gasto administrativo** — Proporcion gasto administrativo vs pedagogico. Alerta si administrativo > 30-35%
+4. **Indice de concentracion del gasto administrativo** — Proporcion gasto administrativo vs total gastos. CRITICO si > 30%, ALERTA si > 20%
 5. **Variacion interanual de ingresos vs matricula/asistencia** — Detecta incoherencias: si matricula baja pero ingresos suben (o viceversa)
 
 ### Indicadores Tacticos (analisis financiero detallado)
 6. **Acreditacion de saldos** — Verifica que los saldos reportados coincidan con documentos de respaldo
 7. **Analisis de promedios historicos de RC (AP)** — Compara rendicion de cuentas actual con promedios historicos para detectar anomalias
 8. **Analisis de proyeccion de saldos (AF)** — Proyecta saldos futuros basado en tendencias para alertar riesgos de deficit
-9. **Gasto remuneracional sobre ingreso depurado** — Proporcion remuneraciones / ingreso total depurado. Normal: 67-72%. Alerta si > 80%
+9. **Gasto remuneracional sobre ingreso depurado** — Proporcion remuneraciones / ingreso total depurado. CRITICO si > 85%, ALERTA si > 65%
 10. **Porcentaje de gasto en innovacion pedagogica** — Gasto en cuentas 410500, 410600, 410700 sobre gasto total. Indica inversion en calidad educativa
 11. **Dependencia sobre fuentes de ingreso (HHI)** — Indice Herfindahl-Hirschman de concentracion de ingresos. HHI > 0.25 indica alta dependencia de una fuente
 12. **Cruce de SNED con niveles de riesgo financiero** — Contrasta rendimiento academico (SNED) con indicadores de riesgo financiero

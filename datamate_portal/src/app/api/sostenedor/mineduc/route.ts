@@ -199,9 +199,9 @@ export async function GET(req: NextRequest) {
         risk_level_fiscal: (fiscal as any)?.risk_level ?? null,
         sned_riesgo_flag: fiscal
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ? (s.indice_sned_promedio > 60 && ((fiscal as any).risk_score || 0) > 60
+          ? (s.indice_sned_promedio > 60 && ((fiscal as any).risk_score || 0) > 45
             ? "ALERTA_CRITICA"
-            : s.indice_sned_promedio < 40 && ((fiscal as any).risk_score || 0) < 30
+            : s.indice_sned_promedio < 40 && ((fiscal as any).risk_score || 0) < 15
             ? "OK"
             : "NORMAL")
           : null,
