@@ -9,3 +9,5 @@ out/
 *.csv
 .ipynb_checkpoints/
 data/
+.claude-flow/
+mineduc_data/
