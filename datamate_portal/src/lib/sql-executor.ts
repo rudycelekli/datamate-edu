@@ -29,6 +29,7 @@ const ALLOWED_TABLES = [
   "mv_payroll_2022",
   "mv_payroll_2023",
   "mv_payroll_2024",
+  "mv_sostenedor_indicators",
 ];
 
 interface SqlResult {
@@ -397,6 +398,50 @@ LIMIT 20
 #### desafio.mv_sostenedor_financials (totales financieros)
 #### desafio.mv_sostenedor_hhi (concentracion de fuentes de ingreso)
 #### desafio.mv_sostenedor_documentos (compras y proveedores)
+
+#### desafio.mv_sostenedor_indicators (~24K filas — indicadores calculados #1 #2 #5 #7 #8 #13, cruza datos SIE con MINEDUC)
+| Columna | Descripcion |
+|---------|-------------|
+| sost_id, periodo, nombre | Identificacion |
+| ind1_costo_por_alumno | #1 Gasto total / matricula (CLP/alumno). CRITICO >$3.75M, ALERTA >$3M |
+| ind1_level | 'OK' / 'ALERTA' / 'CRITICO' |
+| ind2_pct_pedagogico | #2 % gasto pedagogico sobre total. CRITICO <40%, ALERTA <65% |
+| ind2_level | 'OK' / 'ALERTA' / 'CRITICO' |
+| ind5_yoy_ingresos_pct | #5 Variacion % ingresos vs año anterior |
+| ind5_yoy_mat_pct | #5 Variacion % matricula vs año anterior (MINEDUC) |
+| ind5_divergence_flag | #5 'ALERTA' si ingresos y matricula se mueven en sentido opuesto >10pp |
+| ind7_zscore_admin | #7 Z-score de ind4_admin_ratio vs historial propio del sostenedor |
+| ind7_zscore_payroll | #7 Z-score de ind9_payroll_ratio vs historial propio |
+| ind7_zscore_balance | #7 Z-score de balance vs historial propio |
+| ind7_zscore_risk | #7 Z-score de risk_score vs historial propio |
+| ind7_anomaly_flag | #7 TRUE si algun z-score supera ±2σ |
+| ind8_balance_proj_next | #8 Balance proyectado para el siguiente periodo (regresion lineal) |
+| ind8_balance_proj_plus2 | #8 Balance proyectado para dos periodos adelante |
+| ind8_balance_slope_per_period | #8 Pendiente de la tendencia del balance (CLP por periodo) |
+| ind8_model_r2 | #8 R² de ajuste del modelo (0-1, mayor = mejor) |
+| ind8_proj_risk_level | #8 Nivel de riesgo proyectado basado en balance futuro |
+| ind13_alumnos_por_docente | #13 Alumnos por docente. CRITICO >37, ALERTA >25 |
+| ind13_level | 'OK' / 'ALERTA' / 'CRITICO' |
+| mat_total, n_docentes, horas_contrato_total | Datos MINEDUC de apoyo |
+| ind4_admin_ratio, ind9_payroll_ratio, risk_score, risk_level | Pass-through de mv_sostenedor_profile |
+
+**Ejemplo de query (sostenedores con proyeccion de balance negativo):**
+\`\`\`sql
+SELECT sost_id, nombre, periodo, ind8_balance_proj_next, ind8_proj_risk_level, ind8_model_r2
+FROM desafio.mv_sostenedor_indicators
+WHERE ind8_proj_risk_level IN ('CRITICO', 'ALERTA')
+ORDER BY ind8_balance_proj_next ASC
+LIMIT 20
+\`\`\`
+
+**Ejemplo de query (costo por alumno mas alto):**
+\`\`\`sql
+SELECT sost_id, nombre, periodo, ind1_costo_por_alumno, mat_total, total_gastos
+FROM desafio.mv_sostenedor_indicators
+WHERE periodo = '2023' AND ind1_costo_por_alumno IS NOT NULL
+ORDER BY ind1_costo_por_alumno DESC
+LIMIT 20
+\`\`\`
 
 ---
 

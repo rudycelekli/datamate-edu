@@ -286,14 +286,14 @@ export default function SostenedorPage() {
                   <IndicatorCard
                     label="#4 Concentracion Admin"
                     value={fmtPct(latest.ind4_admin_ratio)}
-                    threshold=">35% alerta, >50% critico"
+                    threshold=">20% alerta, >30% critico"
                     level={latest.ind4_level}
                     icon={<PieChart className="w-4 h-4" />}
                   />
                   <IndicatorCard
                     label="#9 Gasto Remuneracional"
                     value={fmtPct(latest.ind9_payroll_ratio)}
-                    threshold=">80% alerta, >95% critico"
+                    threshold=">65% alerta, >85% critico"
                     level={latest.ind9_level}
                     icon={<Users className="w-4 h-4" />}
                   />
