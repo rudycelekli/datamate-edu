@@ -32,17 +32,18 @@ FROM (
 GROUP BY sost_id;
 
 -- Step 2: Historical stats per sostenedor for #7 (z-score baseline)
+-- Cast all to numeric — STDDEV_POP returns double precision which breaks ROUND(v, n)
 CREATE OR REPLACE VIEW desafio.v_sostenedor_hist_stats AS
 SELECT
   sost_id,
-  AVG(ind4_admin_ratio)                                     AS avg_admin,
-  NULLIF(STDDEV_POP(ind4_admin_ratio), 0)                   AS sd_admin,
-  AVG(ind9_payroll_ratio)                                   AS avg_payroll,
-  NULLIF(STDDEV_POP(ind9_payroll_ratio), 0)                 AS sd_payroll,
-  AVG(balance)                                              AS avg_balance,
-  NULLIF(STDDEV_POP(balance), 0)                            AS sd_balance,
-  AVG(risk_score)                                           AS avg_risk,
-  NULLIF(STDDEV_POP(risk_score::float), 0)                  AS sd_risk
+  AVG(ind4_admin_ratio)::numeric                                     AS avg_admin,
+  NULLIF(STDDEV_POP(ind4_admin_ratio)::numeric, 0)                   AS sd_admin,
+  AVG(ind9_payroll_ratio)::numeric                                   AS avg_payroll,
+  NULLIF(STDDEV_POP(ind9_payroll_ratio)::numeric, 0)                 AS sd_payroll,
+  AVG(balance::numeric)                                              AS avg_balance,
+  NULLIF(STDDEV_POP(balance::numeric), 0)::numeric                   AS sd_balance,
+  AVG(risk_score::numeric)                                           AS avg_risk,
+  NULLIF(STDDEV_POP(risk_score::numeric), 0)                         AS sd_risk
 FROM desafio.mv_sostenedor_profile
 GROUP BY sost_id;
 
@@ -57,7 +58,7 @@ SELECT
     WHEN LAG(total_ingresos) OVER w > 0
     THEN ROUND(
       (total_ingresos - LAG(total_ingresos) OVER w)::numeric
-      / LAG(total_ingresos) OVER w * 100,
+      / NULLIF(LAG(total_ingresos) OVER w, 0)::numeric * 100,
     1)
     ELSE NULL
   END AS yoy_ingresos_pct
@@ -75,7 +76,7 @@ SELECT
     WHEN LAG(mat_total) OVER (PARTITION BY rut_sost ORDER BY agno) > 0
     THEN ROUND(
       (mat_total - LAG(mat_total) OVER (PARTITION BY rut_sost ORDER BY agno))::numeric
-      / LAG(mat_total) OVER (PARTITION BY rut_sost ORDER BY agno) * 100,
+      / NULLIF(LAG(mat_total) OVER (PARTITION BY rut_sost ORDER BY agno), 0)::numeric * 100,
     1)
     ELSE NULL
   END AS yoy_mat_pct
@@ -158,7 +159,7 @@ SELECT
   END AS ind1_costo_por_alumno,
 
   CASE
-    WHEN COALESCE(m.mat_total, ml.mat_total) IS NULL THEN NULL
+    WHEN COALESCE(m.mat_total, ml.mat_total) IS NULL OR COALESCE(m.mat_total, ml.mat_total) = 0 THEN NULL
     WHEN p.total_gastos::numeric / COALESCE(m.mat_total, ml.mat_total) > 3750000 THEN 'CRITICO'
     WHEN p.total_gastos::numeric / COALESCE(m.mat_total, ml.mat_total) > 3000000 THEN 'ALERTA'
     ELSE 'OK'
@@ -167,14 +168,14 @@ SELECT
   -- ── #2 Eficiencia pedagógica ─────────────────────────────
   CASE
     WHEN p.total_gastos > 0
-    THEN ROUND(p.gasto_pedagogico::numeric / p.total_gastos * 100, 1)
+    THEN ROUND((p.gasto_pedagogico::numeric / p.total_gastos::numeric) * 100, 1)
     ELSE NULL
   END AS ind2_pct_pedagogico,
 
   CASE
     WHEN p.total_gastos IS NULL OR p.total_gastos = 0 THEN NULL
-    WHEN p.gasto_pedagogico::numeric / p.total_gastos * 100 < 40 THEN 'CRITICO'
-    WHEN p.gasto_pedagogico::numeric / p.total_gastos * 100 < 65 THEN 'ALERTA'
+    WHEN (p.gasto_pedagogico::numeric / p.total_gastos::numeric) * 100 < 40 THEN 'CRITICO'
+    WHEN (p.gasto_pedagogico::numeric / p.total_gastos::numeric) * 100 < 65 THEN 'ALERTA'
     ELSE 'OK'
   END AS ind2_level,
 
@@ -196,16 +197,16 @@ SELECT
   END AS ind5_divergence_flag,
 
   -- ── #7 Z-scores vs own history ───────────────────────────
-  CASE WHEN h.sd_admin   IS NOT NULL THEN ROUND((p.ind4_admin_ratio   - h.avg_admin)   / h.sd_admin,   2) ELSE 0::numeric END AS ind7_zscore_admin,
-  CASE WHEN h.sd_payroll IS NOT NULL THEN ROUND((p.ind9_payroll_ratio - h.avg_payroll) / h.sd_payroll, 2) ELSE 0::numeric END AS ind7_zscore_payroll,
-  CASE WHEN h.sd_balance IS NOT NULL THEN ROUND((p.balance::numeric   - h.avg_balance) / h.sd_balance, 2) ELSE 0::numeric END AS ind7_zscore_balance,
-  CASE WHEN h.sd_risk    IS NOT NULL THEN ROUND((p.risk_score::numeric - h.avg_risk)   / h.sd_risk,   2) ELSE 0::numeric END AS ind7_zscore_risk,
+  CASE WHEN h.sd_admin   IS NOT NULL THEN ROUND(((p.ind4_admin_ratio::numeric   - h.avg_admin)   / h.sd_admin),   2) ELSE 0::numeric END AS ind7_zscore_admin,
+  CASE WHEN h.sd_payroll IS NOT NULL THEN ROUND(((p.ind9_payroll_ratio::numeric - h.avg_payroll) / h.sd_payroll), 2) ELSE 0::numeric END AS ind7_zscore_payroll,
+  CASE WHEN h.sd_balance IS NOT NULL THEN ROUND(((p.balance::numeric            - h.avg_balance) / h.sd_balance), 2) ELSE 0::numeric END AS ind7_zscore_balance,
+  CASE WHEN h.sd_risk    IS NOT NULL THEN ROUND(((p.risk_score::numeric          - h.avg_risk)   / h.sd_risk),   2) ELSE 0::numeric END AS ind7_zscore_risk,
 
   -- Anomaly if any z-score exceeds ±2σ
   CASE
-    WHEN ABS(COALESCE((p.ind4_admin_ratio   - h.avg_admin)   / NULLIF(h.sd_admin,   0), 0)) > 2
-      OR ABS(COALESCE((p.ind9_payroll_ratio - h.avg_payroll) / NULLIF(h.sd_payroll, 0), 0)) > 2
-      OR ABS(COALESCE((p.balance::numeric   - h.avg_balance) / NULLIF(h.sd_balance, 0), 0)) > 2
+    WHEN ABS(COALESCE(((p.ind4_admin_ratio::numeric   - h.avg_admin)   / NULLIF(h.sd_admin,   0)), 0)) > 2
+      OR ABS(COALESCE(((p.ind9_payroll_ratio::numeric - h.avg_payroll) / NULLIF(h.sd_payroll, 0)), 0)) > 2
+      OR ABS(COALESCE(((p.balance::numeric            - h.avg_balance) / NULLIF(h.sd_balance, 0)), 0)) > 2
     THEN TRUE
     ELSE FALSE
   END AS ind7_anomaly_flag,
