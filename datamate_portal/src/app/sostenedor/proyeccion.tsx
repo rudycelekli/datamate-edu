@@ -219,10 +219,10 @@ export default function ProyeccionPanel({ sostId, horizonte = 2 }: { sostId: str
                     <div className="text-[10px] opacity-70">{fmt(p.balance_low)}–{fmt(p.balance_high ?? null)}</div>
                   )}
                 </td>
-                <td className={`py-1.5 px-2 text-right font-mono ${(p.ind4_admin_ratio ?? 0) > 50 ? "text-red-600" : (p.ind4_admin_ratio ?? 0) > 35 ? "text-amber-600" : ""}`}>
+                <td className={`py-1.5 px-2 text-right font-mono ${(p.ind4_admin_ratio ?? 0) > 30 ? "text-red-600" : (p.ind4_admin_ratio ?? 0) > 20 ? "text-amber-600" : ""}`}>
                   {fmtPct(p.ind4_admin_ratio)}
                 </td>
-                <td className={`py-1.5 px-2 text-right font-mono ${(p.ind9_payroll_ratio ?? 0) > 95 ? "text-red-600" : (p.ind9_payroll_ratio ?? 0) > 80 ? "text-amber-600" : ""}`}>
+                <td className={`py-1.5 px-2 text-right font-mono ${(p.ind9_payroll_ratio ?? 0) > 85 ? "text-red-600" : (p.ind9_payroll_ratio ?? 0) > 65 ? "text-amber-600" : ""}`}>
                   {fmtPct(p.ind9_payroll_ratio)}
                 </td>
                 <td className="py-1.5 pl-2 text-right font-mono text-[var(--accent)]">{p.risk_score}</td>
