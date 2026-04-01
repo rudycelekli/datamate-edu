@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { routeDocsMultiBatch, loadDocBase64 } from "@/lib/education-docs";
 import type { DocMeta } from "@/lib/education-docs";
 import { DOMAIN_CONTEXT } from "@/lib/domain-knowledge";
-import { getSchemaDescription } from "@/lib/sql-executor";
+import { getSchemaDescription, executeSql } from "@/lib/sql-executor";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
@@ -18,46 +18,38 @@ ${DOMAIN_CONTEXT}
 ${getSchemaDescription()}
 
 ## Capacidades de Datos
-Tienes conocimiento completo del esquema de base de datos "desafio" con todas sus tablas, columnas y relaciones. Cuando el usuario pregunte sobre datos especificos, puedes:
+Tienes acceso DIRECTO a la base de datos PostgreSQL "desafio" a traves de la herramienta **query_database**. Cuando el usuario pregunte sobre datos especificos:
 
-1. **Explicar** como se estructura la data y que consultas se necesitarian
-2. **Referenciar** las relaciones entre tablas (JOINs por sost_id, periodo, rbd, etc.)
-3. **Calcular** indicadores SIE usando las formulas correctas con las cuentas apropiadas
-4. **Cruzar** informacion entre estado_resultado, documentos y remuneraciones
-5. **Contextualizar** con los 13 indicadores SIE y umbrales de riesgo
+1. **USA query_database** para ejecutar SQL y obtener resultados reales
+2. **Muestra los datos** en tablas markdown formateadas
+3. **Analiza e interpreta** los resultados en contexto de los indicadores SIE
+4. **Alerta** cuando encuentres valores fuera de umbral
 
-### Tablas y Relaciones Clave
-- **estado_resultado**: Ingresos y gastos anuales por sostenedor/RBD/cuenta/subvencion (2016-2024)
-- **documentos**: Detalle de compras con proveedores, fechas, montos, tipos de documento (2020-2024)
-- **remuneraciones_YYYY**: Planilla mensual por trabajador con haberes, descuentos, liquido (2020-2024)
-- JOINs: sost_id = sostenedor (en remuneraciones), periodo, rbd, subvencion_alias, cuenta_alias
+### Vistas Materializadas (PREFERIR para analisis rapidos)
+- **mv_sostenedor_profile**: perfil completo por sostenedor/periodo — ind4_admin_ratio, ind9_payroll_ratio, balance_ratio, risk_score, risk_level, ind11_hhi
+- **mv_sostenedor_yoy**: cambios año a año — yoy_ingresos_pct, yoy_gastos_pct, yoy_haberes_pct
+- **mv_sostenedor_financials**: totales financieros agregados
+- **mv_sostenedor_payroll**: datos de remuneraciones agregados por sostenedor/periodo
+- **mv_sostenedor_hhi**: indice HHI de concentracion de ingresos
+- **mv_sostenedor_documentos**: resumen de documentos/compras
+- **mv_sostenedor_identity**: nombre y RUT de sostenedores
 
-### Indicadores que Puedes Calcular
-- #4 Concentracion Admin: cuentas "420*" / gasto total → alerta >35%
-- #9 Gasto Remuneracional: totalhaber / ingreso depurado → normal 67-72%, alerta >80%
-- #10 Innovacion Pedagogica: cuentas 410500+410600+410700 / gasto total
-- #11 HHI Concentracion: suma de cuadrados de proporciones por fuente → >0.25 = alta
+### Tablas Base (para analisis detallado)
+- **estado_resultado**, **documentos**, **remuneraciones_YYYY** (ver esquema arriba)
 
 ## Principios
-1. **Fundamentar en datos**: Siempre referencia datos especificos y los 13 indicadores SIE cuando sea pertinente
-2. **Preguntas clarificadoras**: Si el escenario es ambiguo, pregunta
-3. **Tablas comparativas**: Usa tablas markdown para comparaciones
-4. **Alertas proactivas**: Señala riesgos y anomalias usando los umbrales de los indicadores (ej: remuneraciones >80% = alerta, gasto administrativo >35% = alerta, HHI >0.25 = alta concentracion)
-5. **Respuestas estructuradas**: Quick Answer → Analisis → Recomendaciones
-6. **Relaciones entre tablas**: Cuando analices un sostenedor, cruza datos de estado_resultado con documentos y remuneraciones usando las claves compartidas (sost_id, periodo, rbd)
-7. **Consultas SQL**: Cuando el usuario pida datos especificos que requieren consultas, muestra la consulta SQL que usarias y explica los resultados esperados
-
-## Formato de Citaciones
-Cuando referencie documentos proporcionados, usa: 【Nombre del Documento, Seccion X, p.XX】
+1. **Ejecuta queries reales**: Usa query_database para responder preguntas sobre datos
+2. **Tablas comparativas**: Formatea resultados como tablas markdown
+3. **Alertas proactivas**: Señala riesgos usando umbrales SIE
+4. **Respuestas estructuradas**: Quick Answer → Datos → Analisis → Recomendaciones
+5. **SQL eficiente**: Siempre usa GROUP BY + agregaciones en tablas grandes; prefiere vistas mv_* para consultas generales
+6. **Citas documentales**: Usa 【Nombre del Documento, Seccion X, p.XX】para PDF
 
 ## Reglas Criticas
-- NUNCA inventes datos o estadisticas
-- Cuando referencie documentos proporcionados, usa notacion de 【corchetes】
+- NUNCA inventes datos — SIEMPRE ejecuta una query para obtener numeros reales
 - Responde SIEMPRE en español
-- Si una pregunta esta fuera del alcance, indicalo claramente
 - Para calculos, muestra el procedimiento paso a paso
-- Cuando menciones indicadores, usa su numero y nombre oficial (ej: "Indicador #9: Gasto remuneracional sobre ingreso depurado")
-- Cuando muestres SQL, usa bloques de codigo con \`\`\`sql`;
+- Cuando menciones indicadores, usa numero y nombre oficial (ej: "Indicador #9: Gasto remuneracional")`;
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -97,6 +89,27 @@ function buildApiMessages(messages: ChatMessage[], docs: DocMeta[]) {
   return apiMessages;
 }
 
+const TOOLS = [
+  {
+    name: "query_database",
+    description: "Ejecuta una consulta SQL SELECT de solo lectura contra la base de datos PostgreSQL 'desafio' de Supabase. Usa esto para obtener datos reales de sostenedores, remuneraciones, documentos y estados de resultado. Siempre usa GROUP BY y agregaciones en tablas grandes. Prefiere las vistas mv_sostenedor_* para consultas generales.",
+    input_schema: {
+      type: "object",
+      properties: {
+        sql: {
+          type: "string",
+          description: "Consulta SQL SELECT valida. Solo SELECT/WITH permitidos. Usa esquema 'desafio.' como prefijo (ej: desafio.mv_sostenedor_profile). Siempre incluye LIMIT. Para tablas grandes (estado_resultado, documentos, remuneraciones_YYYY) SIEMPRE usa agregaciones con GROUP BY.",
+        },
+        description: {
+          type: "string",
+          description: "Breve descripcion de lo que busca esta consulta (para mostrar al usuario mientras espera)",
+        },
+      },
+      required: ["sql", "description"],
+    },
+  },
+];
+
 export async function POST(req: NextRequest) {
   if (!ANTHROPIC_API_KEY) {
     return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY no configurada" }), {
@@ -128,90 +141,185 @@ export async function POST(req: NextRequest) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === "user")?.content || "";
   const conversationCtx = messages.map(m => m.content).join(" ");
   const { directBatch } = routeDocsMultiBatch(lastUserMsg, conversationCtx);
-
   const allDocNames = directBatch.map(d => d.topic);
 
-  // Build API messages
   const apiMessages = buildApiMessages(messages, directBatch);
 
-  // Stream from Claude with extended thinking for complex analysis
-  let claudeRes: Response;
-  try {
-    claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 16000,
-        stream: true,
-        thinking: {
-          type: "enabled",
-          budget_tokens: 10000,
-        },
-        system: SYSTEM_PROMPT + (educationContext
-          ? `\n\n## Datos Educativos Actuales\nTienes acceso a los datos educativos actuales. Cuando pregunten sobre gastos, sostenedores o el portafolio, referencia estos datos:\n\n${educationContext}`
-          : ""),
-        messages: apiMessages,
-      }),
-    });
-  } catch (err) {
-    return new Response(JSON.stringify({ error: `Error de API: ${err instanceof Error ? err.message : "Desconocido"}` }), {
-      status: 502,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  const systemPrompt = SYSTEM_PROMPT + (educationContext
+    ? `\n\n## Datos Educativos Actuales\nTienes acceso a los datos educativos actuales. Cuando pregunten sobre gastos, sostenedores o el portafolio, referencia estos datos:\n\n${educationContext}`
+    : "");
 
-  if (!claudeRes.ok) {
-    const errText = await claudeRes.text();
-    console.error("Milo API error:", claudeRes.status, errText.slice(0, 500));
-    return new Response(JSON.stringify({ error: `Claude API ${claudeRes.status}`, detail: errText.slice(0, 300) }), {
-      status: 502,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  // Forward SSE stream as plain text
   const encoder = new TextEncoder();
+
   const stream = new ReadableStream({
     async start(controller) {
       controller.enqueue(encoder.encode(`<!--DOCS:${JSON.stringify(allDocNames)}-->`));
 
-      const reader = claudeRes.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      // Agentic loop: Claude can call query_database multiple times
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const loopMessages: any[] = [...apiMessages];
+      let iterations = 0;
+      const MAX_ITERATIONS = 5;
 
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      while (iterations < MAX_ITERATIONS) {
+        iterations++;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
+        let claudeRes: Response;
+        try {
+          claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": ANTHROPIC_API_KEY!,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 16000,
+              stream: true,
+              system: systemPrompt,
+              tools: TOOLS,
+              messages: loopMessages,
+            }),
+          });
+        } catch (err) {
+          controller.enqueue(encoder.encode(`\n\n[Error de conexion: ${err instanceof Error ? err.message : "Desconocido"}]`));
+          break;
+        }
 
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const data = line.slice(6).trim();
-            if (data === "[DONE]") continue;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
-                controller.enqueue(encoder.encode(parsed.delta.text));
+        if (!claudeRes.ok) {
+          const errText = await claudeRes.text();
+          console.error("Milo API error:", claudeRes.status, errText.slice(0, 500));
+          controller.enqueue(encoder.encode(`\n\n[Error de API: ${claudeRes.status}]`));
+          break;
+        }
+
+        // Stream and collect the response
+        const reader = claudeRes.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const toolUses: any[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const contentBlocks: any[] = [];
+        let stopReason = "";
+        let currentBlockType = "";
+        let currentBlockId = "";
+        let currentBlockName = "";
+        let currentBlockInput = "";
+        let currentBlockText = "";
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const data = line.slice(6).trim();
+              if (data === "[DONE]") continue;
+
+              try {
+                const parsed = JSON.parse(data);
+
+                if (parsed.type === "message_delta" && parsed.delta?.stop_reason) {
+                  stopReason = parsed.delta.stop_reason;
+                }
+
+                if (parsed.type === "content_block_start") {
+                  const block = parsed.content_block;
+                  currentBlockType = block.type;
+                  currentBlockId = block.id || "";
+                  currentBlockName = block.name || "";
+                  currentBlockInput = "";
+                  currentBlockText = "";
+                }
+
+                if (parsed.type === "content_block_delta") {
+                  const delta = parsed.delta;
+                  if (delta.type === "text_delta") {
+                    currentBlockText += delta.text;
+                    controller.enqueue(encoder.encode(delta.text));
+                  } else if (delta.type === "input_json_delta") {
+                    currentBlockInput += delta.partial_json;
+                  }
+                }
+
+                if (parsed.type === "content_block_stop") {
+                  if (currentBlockType === "text") {
+                    contentBlocks.push({ type: "text", text: currentBlockText });
+                  } else if (currentBlockType === "tool_use") {
+                    let parsedInput: { sql?: string; description?: string } = {};
+                    try { parsedInput = JSON.parse(currentBlockInput); } catch { /* */ }
+                    const toolUseBlock = {
+                      type: "tool_use",
+                      id: currentBlockId,
+                      name: currentBlockName,
+                      input: parsedInput,
+                    };
+                    contentBlocks.push(toolUseBlock);
+                    toolUses.push(toolUseBlock);
+                  }
+                }
+              } catch {
+                // skip malformed
               }
-            } catch {
-              // skip malformed lines
             }
           }
+        } catch (err) {
+          console.error("Stream read error:", err);
         }
-      } catch (err) {
-        console.error("Stream error:", err);
-      } finally {
-        controller.close();
+
+        // Add Claude's response to loop messages
+        loopMessages.push({ role: "assistant", content: contentBlocks });
+
+        // If no tool calls, we're done
+        if (stopReason !== "tool_use" || toolUses.length === 0) {
+          break;
+        }
+
+        // Execute each tool call and send results back
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const toolResults: any[] = [];
+
+        for (const toolUse of toolUses) {
+          if (toolUse.name !== "query_database") continue;
+
+          const { sql, description } = toolUse.input as { sql: string; description: string };
+
+          // Notify user we're running a query
+          controller.enqueue(encoder.encode(`\n\n_Consultando base de datos: ${description}..._\n\n`));
+
+          const result = await executeSql(sql);
+
+          let resultText: string;
+          if (result.error) {
+            resultText = JSON.stringify({ error: result.error, sql });
+          } else {
+            resultText = JSON.stringify({
+              rowCount: result.rowCount,
+              truncated: result.truncated,
+              executionMs: result.executionMs,
+              data: result.data,
+            });
+          }
+
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUse.id,
+            content: resultText,
+          });
+        }
+
+        loopMessages.push({ role: "user", content: toolResults });
       }
+
+      controller.close();
     },
   });
 

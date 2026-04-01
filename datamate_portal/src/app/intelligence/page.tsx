@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import AppHeader from "@/components/AppHeader";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
-  CartesianGrid, LineChart, Line,
+  CartesianGrid, LineChart, Line, ReferenceLine,
 } from "recharts";
 import {
   Loader2, TrendingUp, DollarSign, FileText, Building2,
@@ -65,6 +65,11 @@ interface StatsData {
   totalLiquido: number;
   promedioLiquido: number;
   proporcionRemuneraciones: number;
+  totalPlantaFija: number;
+  totalContrata: number;
+  payrollByRegion: Array<{ name: string; avgRatio: number; trabajadores: number; haberes: number }>;
+  payrollByDependencia: Array<{ name: string; avgRatio: number; trabajadores: number; haberes: number }>;
+  payrollTopSostenedores: Array<{ sost_id: string; nombre: string; ratio: number; haberes: number; trabajadores: number; level: string }>;
   filterOptions?: {
     regiones: string[];
     dependencias: string[];
@@ -229,6 +234,8 @@ export default function IntelligencePage() {
     topRegion: "--", topRegionPercent: "0",
     totalRemuneraciones: 0, totalHaber: 0, totalDescuento: 0, totalLiquido: 0,
     promedioLiquido: 0, proporcionRemuneraciones: 0,
+    totalPlantaFija: 0, totalContrata: 0,
+    payrollByRegion: [], payrollByDependencia: [], payrollTopSostenedores: [],
   };
 
   // AI Chat
@@ -1000,31 +1007,121 @@ export default function IntelligencePage() {
           </div>
 
           <div className="glass-card overflow-hidden">
-            <SectionHeader section="remuneraciones" title="Resumen Remuneraciones" icon={<DollarSign className="w-4 h-4 text-blue-600" />} />
+            <SectionHeader section="remuneraciones" title="Remuneraciones" icon={<DollarSign className="w-4 h-4 text-blue-600" />} />
             {expandedSection === "remuneraciones" && (
-              <div className="p-4 border-t border-[var(--border)]">
-                <div className="grid grid-cols-2 gap-3">
+              <div className="p-4 border-t border-[var(--border)] space-y-4">
+
+                {/* KPI row */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {[
                     { label: "Total Haberes", value: fmtCurrencyShort(stats.totalHaber), color: "text-blue-700" },
-                    { label: "Total Descuentos", value: fmtCurrencyShort(stats.totalDescuento), color: "text-red-600" },
                     { label: "Total Líquido", value: fmtCurrencyShort(stats.totalLiquido), color: "text-emerald-700" },
                     { label: "Promedio Líquido", value: fmtCurrencyShort(stats.promedioLiquido), color: "text-[var(--accent)]" },
+                    { label: "Total Trabajadores", value: stats.totalRemuneraciones.toLocaleString("es-CL"), color: "text-slate-700" },
                   ].map(item => (
                     <div key={item.label} className="p-3 bg-[var(--bg-secondary)] rounded-lg">
                       <div className="text-[10px] text-[var(--text-muted)]">{item.label}</div>
-                      <div className={`text-lg font-bold ${item.color}`}>{item.value}</div>
+                      <div className={`text-base font-bold ${item.color}`}>{item.value}</div>
                     </div>
                   ))}
                 </div>
+
+                {/* Proporción + tipo contrato */}
                 {stats.totalHaber > 0 && (
-                  <div className="mt-3 p-3 bg-blue-50 rounded-lg text-xs">
-                    <span className="font-semibold">Proporción sobre gastos: </span>
-                    <span className={stats.proporcionRemuneraciones > 85 ? "text-red-600 font-bold" : stats.proporcionRemuneraciones > 65 ? "text-amber-600 font-semibold" : "text-emerald-600 font-semibold"}>
-                      {stats.proporcionRemuneraciones}%
-                    </span>
-                    <span className="text-[var(--text-muted)]"> del total de gastos</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className={`p-3 rounded-lg text-xs col-span-1 ${stats.proporcionRemuneraciones > 85 ? "bg-red-50" : stats.proporcionRemuneraciones > 65 ? "bg-amber-50" : "bg-emerald-50"}`}>
+                      <div className="text-[10px] text-[var(--text-muted)] mb-1">Indicador #9 — % Haberes / Ingresos</div>
+                      <span className={`text-xl font-bold ${stats.proporcionRemuneraciones > 85 ? "text-red-600" : stats.proporcionRemuneraciones > 65 ? "text-amber-600" : "text-emerald-600"}`}>
+                        {stats.proporcionRemuneraciones}%
+                      </span>
+                      <div className="text-[10px] mt-1 text-[var(--text-muted)]">
+                        {stats.proporcionRemuneraciones > 85 ? "🔴 CRÍTICO — supera umbral 85%" : stats.proporcionRemuneraciones > 65 ? "🟡 ALERTA — supera umbral 65%" : "✅ OK — dentro de parámetros"}
+                      </div>
+                    </div>
+                    <div className="p-3 bg-[var(--bg-secondary)] rounded-lg text-xs">
+                      <div className="text-[10px] text-[var(--text-muted)] mb-1">Planta Fija</div>
+                      <div className="text-xl font-bold text-slate-700">{stats.totalPlantaFija.toLocaleString("es-CL")}</div>
+                      <div className="text-[10px] text-[var(--text-muted)]">
+                        {stats.totalRemuneraciones > 0 ? `${((stats.totalPlantaFija / stats.totalRemuneraciones) * 100).toFixed(1)}% del total` : "—"}
+                      </div>
+                    </div>
+                    <div className="p-3 bg-[var(--bg-secondary)] rounded-lg text-xs">
+                      <div className="text-[10px] text-[var(--text-muted)] mb-1">Contrata / Honorarios</div>
+                      <div className="text-xl font-bold text-slate-700">{stats.totalContrata.toLocaleString("es-CL")}</div>
+                      <div className="text-[10px] text-[var(--text-muted)]">
+                        {stats.totalRemuneraciones > 0 ? `${((stats.totalContrata / stats.totalRemuneraciones) * 100).toFixed(1)}% del total` : "—"}
+                      </div>
+                    </div>
                   </div>
                 )}
+
+                {/* Payroll ratio by region chart */}
+                {stats.payrollByRegion.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-[var(--text-primary)] mb-2">Ratio Remuneracional Promedio por Región (%)</div>
+                    <ResponsiveContainer width="100%" height={Math.max(160, stats.payrollByRegion.length * 24)}>
+                      <BarChart data={stats.payrollByRegion} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis type="number" domain={[0, 100]} tickFormatter={v => `${v}%`} tick={{ fontSize: 10 }} />
+                        <YAxis type="category" dataKey="name" width={60} tick={{ fontSize: 10 }} />
+                        <Tooltip formatter={(v: number) => [`${v}%`, "Ratio remuneracional"]} />
+                        <ReferenceLine x={85} stroke="#ef4444" strokeDasharray="4 4" label={{ value: "85%", position: "insideTopRight", fontSize: 9, fill: "#ef4444" }} />
+                        <ReferenceLine x={65} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: "65%", position: "insideTopLeft", fontSize: 9, fill: "#f59e0b" }} />
+                        <Bar dataKey="avgRatio" name="Ratio Promedio" radius={[0, 3, 3, 0]}>
+                          {stats.payrollByRegion.map((entry, i) => (
+                            <Cell key={i} fill={entry.avgRatio > 85 ? "#ef4444" : entry.avgRatio > 65 ? "#f59e0b" : "#10b981"} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Payroll by dependencia */}
+                {stats.payrollByDependencia.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-[var(--text-primary)] mb-2">Ratio por Tipo de Dependencia</div>
+                    <div className="flex gap-2 flex-wrap">
+                      {stats.payrollByDependencia.map(d => (
+                        <div key={d.name} className={`px-3 py-2 rounded-lg text-xs text-center min-w-[100px] ${d.avgRatio > 85 ? "bg-red-50 border border-red-200" : d.avgRatio > 65 ? "bg-amber-50 border border-amber-200" : "bg-emerald-50 border border-emerald-200"}`}>
+                          <div className="font-bold text-sm">{d.name}</div>
+                          <div className={`text-base font-bold ${d.avgRatio > 85 ? "text-red-600" : d.avgRatio > 65 ? "text-amber-600" : "text-emerald-600"}`}>{d.avgRatio}%</div>
+                          <div className="text-[10px] text-[var(--text-muted)]">{d.trabajadores.toLocaleString("es-CL")} trabajadores</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Top sostenedores by payroll */}
+                {stats.payrollTopSostenedores.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-[var(--text-primary)] mb-2">Sostenedores con Mayor Carga Remuneracional (ratio {">"}65%)</div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-[var(--border)] text-[var(--text-muted)]">
+                            <th className="text-left py-1.5 pr-3">Sostenedor</th>
+                            <th className="text-right pr-3">Ratio</th>
+                            <th className="text-right pr-3">Haberes</th>
+                            <th className="text-right">Trabajadores</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stats.payrollTopSostenedores.slice(0, 15).map((s, i) => (
+                            <tr key={i} className="border-b border-[var(--border)] hover:bg-[var(--bg-secondary)]">
+                              <td className="py-1.5 pr-3 max-w-[200px] truncate" title={s.nombre}>{s.nombre || s.sost_id}</td>
+                              <td className={`text-right pr-3 font-semibold ${s.ratio > 85 ? "text-red-600" : "text-amber-600"}`}>{s.ratio}%</td>
+                              <td className="text-right pr-3 text-[var(--text-muted)]">{fmtCurrencyShort(s.haberes)}</td>
+                              <td className="text-right text-[var(--text-muted)]">{s.trabajadores.toLocaleString("es-CL")}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
               </div>
             )}
           </div>

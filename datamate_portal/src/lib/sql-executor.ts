@@ -17,6 +17,18 @@ const ALLOWED_TABLES = [
   "remuneraciones_2022",
   "remuneraciones_2023",
   "remuneraciones_2024",
+  "mv_sostenedor_profile",
+  "mv_sostenedor_yoy",
+  "mv_sostenedor_financials",
+  "mv_sostenedor_payroll",
+  "mv_sostenedor_hhi",
+  "mv_sostenedor_documentos",
+  "mv_sostenedor_identity",
+  "mv_payroll_2020",
+  "mv_payroll_2021",
+  "mv_payroll_2022",
+  "mv_payroll_2023",
+  "mv_payroll_2024",
 ];
 
 interface SqlResult {
@@ -306,6 +318,61 @@ Planilla mensual por trabajador. Una tabla por año: remuneraciones_2020, _2021,
 \`\`\`json
 {"rut":"2020546790","periodo":"2024","sostenedor":"74290100","rbd":"9930","dgv":"3","tip":"CPF","hc":"42","fei":"2023-08-07","fun":"ASIPAR","mes":"1","anio":"2024","habernorend":"0","totalhaber":"1598164","pre":"130191","aaf":"0","sal":"86138","asa":"0","imp":"5649","cca":"0","dif":"0","dis":"2914","rej":"0","sce":"0","ant":"0","odv":"3000","totaldescuento":"227892","liquido":"1370272","subvencion_alias":"SEP","cuenta_alias":"410403","monto":"17972"}
 \`\`\`
+
+---
+
+---
+
+### Vistas Materializadas (USAR PRIMERO para consultas generales — mucho mas rapidas)
+
+#### desafio.mv_sostenedor_profile (~24K filas — perfil completo por sostenedor/periodo)
+| Columna | Descripcion |
+|---------|-------------|
+| sost_id, periodo | Claves primarias |
+| nombre, rut | Identidad del sostenedor |
+| region_rbd, dependencia_rbd, rbd_count | Ubicacion y numero de establecimientos |
+| total_ingresos, total_gastos, balance | Flujo financiero |
+| gasto_admin, gasto_pedagogico, gasto_innovacion, gasto_operacion, gasto_infraestructura | Gastos por categoria |
+| ind4_admin_ratio, ind4_level | #4 % gastos administrativos (CRITICO >30%, ALERTA >20%) |
+| ind9_payroll_ratio, ind9_level | #9 % haberes sobre ingresos (CRITICO >85%, ALERTA >65%) |
+| ind10_innovacion_ratio | #10 % innovacion pedagogica |
+| ind11_hhi, ind11_level | #11 indice HHI concentracion fuentes (CRITICO >0.5, ALERTA >0.25) |
+| balance_ratio, balance_level | Balance % (CRITICO <-5%, ALERTA <5%) |
+| tasa_ejecucion | % gastos/ingresos |
+| total_haberes, total_liquido, trabajadores, planta_fija, contrata, total_horas | Datos remuneraciones |
+| doc_count, doc_monto, doc_types, proveedores_unicos, doc_coverage_ratio | Datos documentos |
+| risk_score, risk_level | Score ponderado y nivel (CRITICO >45, ALERTA >15) |
+
+**Ejemplo de query:**
+\`\`\`sql
+SELECT nombre, ind9_payroll_ratio, trabajadores, total_haberes, ind9_level
+FROM desafio.mv_sostenedor_profile
+WHERE periodo = '2020' AND ind9_level IN ('CRITICO', 'ALERTA')
+ORDER BY ind9_payroll_ratio DESC
+LIMIT 20
+\`\`\`
+
+#### desafio.mv_sostenedor_yoy (~24K filas — cambios año a año)
+| Columna | Descripcion |
+|---------|-------------|
+| sost_id, periodo, nombre | Identificacion |
+| yoy_ingresos_pct | Variacion % ingresos vs año anterior |
+| yoy_gastos_pct | Variacion % gastos vs año anterior |
+| yoy_haberes_pct | Variacion % haberes vs año anterior |
+| yoy_admin_delta | Cambio absoluto en ratio administrativo |
+| yoy_payroll_delta | Cambio absoluto en ratio remuneracional |
+
+#### desafio.mv_sostenedor_payroll (remuneraciones agregadas por sostenedor/periodo)
+| Columna | Descripcion |
+|---------|-------------|
+| total_haberes, total_liquido | Montos totales |
+| trabajadores, planta_fija, contrata | Conteo por tipo |
+| total_horas_contratadas | Horas totales |
+
+#### desafio.mv_sostenedor_identity (nombres y RUTs)
+#### desafio.mv_sostenedor_financials (totales financieros)
+#### desafio.mv_sostenedor_hhi (concentracion de fuentes de ingreso)
+#### desafio.mv_sostenedor_documentos (compras y proveedores)
 
 ---
 

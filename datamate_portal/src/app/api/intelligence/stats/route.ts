@@ -66,6 +66,16 @@ export async function GET(req: NextRequest) {
     let sumTasaEjecucion = 0;
     let countWithPayroll = 0;
     let countWithHhi = 0;
+    let totalPlantaFija = 0;
+    let totalContrata = 0;
+
+    // Payroll by region
+    interface PayrollBucket { sumRatio: number; count: number; sumHaberes: number; trabajadores: number }
+    const payrollByRegion: Record<string, PayrollBucket> = {};
+    // Payroll by dependencia
+    const payrollByDep: Record<string, PayrollBucket> = {};
+    // Top payroll sostenedores
+    const payrollTopRows: { sost_id: string; nombre: string; ratio: number; haberes: number; trabajadores: number; level: string }[] = [];
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const r of allProfiles as any[]) {
@@ -79,6 +89,8 @@ export async function GET(req: NextRequest) {
       totalHaberes += Number(r.total_haberes) || 0;
       totalLiquido += Number(r.total_liquido) || 0;
       totalTrabajadores += Number(r.trabajadores) || 0;
+      totalPlantaFija += Number(r.planta_fija) || 0;
+      totalContrata += Number(r.contrata) || 0;
       totalDocs += Number(r.doc_count) || 0;
       totalDocMonto += Number(r.doc_monto) || 0;
 
@@ -92,8 +104,9 @@ export async function GET(req: NextRequest) {
       sumAdminRatio += Number(r.ind4_admin_ratio) || 0;
       sumInnovacionRatio += Number(r.ind10_innovacion_ratio) || 0;
       sumTasaEjecucion += Number(r.tasa_ejecucion) || 0;
-      if (Number(r.ind9_payroll_ratio) > 0) {
-        sumPayrollRatio += Number(r.ind9_payroll_ratio);
+      const payRatio = Number(r.ind9_payroll_ratio) || 0;
+      if (payRatio > 0) {
+        sumPayrollRatio += payRatio;
         countWithPayroll++;
       }
       if (Number(r.ind11_hhi) > 0) {
@@ -119,6 +132,36 @@ export async function GET(req: NextRequest) {
         if (!byPeriodo[per]) byPeriodo[per] = { count: 0, monto: 0 };
         byPeriodo[per].count++;
         byPeriodo[per].monto += monto;
+      }
+
+      // Payroll by region
+      if (payRatio > 0) {
+        if (!payrollByRegion[reg]) payrollByRegion[reg] = { sumRatio: 0, count: 0, sumHaberes: 0, trabajadores: 0 };
+        payrollByRegion[reg].sumRatio += payRatio;
+        payrollByRegion[reg].count++;
+        payrollByRegion[reg].sumHaberes += Number(r.total_haberes) || 0;
+        payrollByRegion[reg].trabajadores += Number(r.trabajadores) || 0;
+      }
+
+      // Payroll by dependencia
+      if (payRatio > 0) {
+        if (!payrollByDep[dep]) payrollByDep[dep] = { sumRatio: 0, count: 0, sumHaberes: 0, trabajadores: 0 };
+        payrollByDep[dep].sumRatio += payRatio;
+        payrollByDep[dep].count++;
+        payrollByDep[dep].sumHaberes += Number(r.total_haberes) || 0;
+        payrollByDep[dep].trabajadores += Number(r.trabajadores) || 0;
+      }
+
+      // Track top payroll sostenedores (only CRITICO/ALERTA)
+      if (payRatio > 65) {
+        payrollTopRows.push({
+          sost_id: String(r.sost_id || ""),
+          nombre: String(r.nombre || r.sost_id || ""),
+          ratio: payRatio,
+          haberes: Number(r.total_haberes) || 0,
+          trabajadores: Number(r.trabajadores) || 0,
+          level: String(r.ind9_level || "OK"),
+        });
       }
     }
 
@@ -199,6 +242,28 @@ export async function GET(req: NextRequest) {
       totalLiquido: totalLiquido,
       promedioLiquido: totalTrabajadores > 0 ? Math.round(totalLiquido / totalTrabajadores) : 0,
       proporcionRemuneraciones: totalGastos > 0 ? Number(((totalHaberes / totalGastos) * 100).toFixed(1)) : 0,
+      totalPlantaFija,
+      totalContrata,
+      payrollByRegion: Object.entries(payrollByRegion)
+        .map(([name, d]) => ({
+          name,
+          avgRatio: Number((d.sumRatio / d.count).toFixed(1)),
+          trabajadores: d.trabajadores,
+          haberes: d.sumHaberes,
+        }))
+        .sort((a, b) => b.avgRatio - a.avgRatio)
+        .slice(0, 15),
+      payrollByDependencia: Object.entries(payrollByDep)
+        .map(([name, d]) => ({
+          name,
+          avgRatio: Number((d.sumRatio / d.count).toFixed(1)),
+          trabajadores: d.trabajadores,
+          haberes: d.sumHaberes,
+        }))
+        .sort((a, b) => b.avgRatio - a.avgRatio),
+      payrollTopSostenedores: payrollTopRows
+        .sort((a, b) => b.ratio - a.ratio)
+        .slice(0, 20),
 
       // Documentos
       totalDocumentos: totalDocs,
