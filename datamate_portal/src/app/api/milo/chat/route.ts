@@ -39,17 +39,39 @@ Tienes acceso DIRECTO a la base de datos PostgreSQL "desafio" a traves de la her
 
 ## Principios
 1. **Ejecuta queries reales**: Usa query_database para responder preguntas sobre datos
-2. **Tablas comparativas**: Formatea resultados como tablas markdown
-3. **Alertas proactivas**: Señala riesgos usando umbrales SIE
-4. **Respuestas estructuradas**: Quick Answer → Datos → Analisis → Recomendaciones
-5. **SQL eficiente**: Siempre usa GROUP BY + agregaciones en tablas grandes; prefiere vistas mv_* para consultas generales
-6. **Citas documentales**: Usa 【Nombre del Documento, Seccion X, p.XX】para PDF
+2. **Grafica los datos**: Usa render_chart SIEMPRE que el usuario pida visualizar, comparar o ver tendencias — no esperes a que lo pida explicitamente si tiene sentido graficarlo
+3. **Tablas comparativas**: Formatea resultados como tablas markdown cuando no graficas
+4. **Alertas proactivas**: Señala riesgos usando umbrales SIE
+5. **Respuestas estructuradas**: Quick Answer → Datos/Grafico → Analisis → Recomendaciones
+6. **SQL eficiente**: Siempre usa GROUP BY + agregaciones en tablas grandes; prefiere vistas mv_* para consultas generales
+7. **Citas documentales**: Usa 【Nombre del Documento, Seccion X, p.XX】para PDF
+
+## Visualizacion de Datos (render_chart)
+**USA render_chart proactivamente** — no solo cuando el usuario lo pide:
+- Distribucion de haberes por sostenedor → bar chart
+- Tendencia de remuneraciones por periodo → line chart
+- Proporcion planta fija vs contrata → pie chart
+- Comparacion de gasto por region → bar chart
+- Evolucion del balance → line chart
+- Top sostenedores por indicador → bar chart horizontal
+
+**Flujo correcto:**
+1. Consulta datos con query_database (max 20-30 filas para claridad visual)
+2. Llama render_chart con los datos obtenidos (pasa los objetos directamente, sin transformar)
+3. Agrega analisis textual despues del grafico
+
+**Para remuneraciones**, estas queries son utiles:
+- Por sostenedor: SELECT sostenedor AS nombre, SUM(totalhaber::numeric) AS total_haberes FROM desafio.remuneraciones_2024 WHERE anio='2024' GROUP BY sostenedor ORDER BY total_haberes DESC LIMIT 15
+- Por mes: SELECT mes, SUM(totalhaber::numeric) AS total_haberes FROM desafio.remuneraciones_2024 WHERE sostenedor='XXXXX' GROUP BY mes ORDER BY mes::int
+- Planta vs contrata: SELECT tip, COUNT(DISTINCT rut) AS trabajadores, SUM(totalhaber::numeric) AS total_haberes FROM desafio.remuneraciones_2024 WHERE sostenedor='XXXXX' GROUP BY tip
+- Vista rapida: SELECT sost_id, total_haberes, trabajadores, planta_fija, contrata FROM desafio.mv_sostenedor_payroll WHERE periodo='2024' ORDER BY total_haberes DESC LIMIT 20
 
 ## Reglas Criticas
 - NUNCA inventes datos — SIEMPRE ejecuta una query para obtener numeros reales
 - Responde SIEMPRE en español
 - Para calculos, muestra el procedimiento paso a paso
-- Cuando menciones indicadores, usa numero y nombre oficial (ej: "Indicador #9: Gasto remuneracional")`;
+- Cuando menciones indicadores, usa numero y nombre oficial (ej: "Indicador #9: Gasto remuneracional")
+- Para preguntas de remuneraciones: usa mv_sostenedor_payroll para totales rapidos; remuneraciones_YYYY para detalle por trabajador/mes`;
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -106,6 +128,57 @@ const TOOLS = [
         },
       },
       required: ["sql", "description"],
+    },
+  },
+  {
+    name: "render_chart",
+    description: "Renderiza un grafico interactivo directamente en el chat. Usar SIEMPRE despues de query_database cuando el usuario pide visualizar datos, comparar valores o ver tendencias. Soporta bar (barras — mejor para comparar sostenedores/regiones/periodos), line (lineas — mejor para tendencias temporales), pie (torta — mejor para distribuciones porcentuales).",
+    input_schema: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: ["bar", "line", "pie"],
+          description: "Tipo de grafico: bar=comparar categorias, line=tendencia temporal, pie=distribucion porcentual",
+        },
+        title: {
+          type: "string",
+          description: "Titulo descriptivo del grafico",
+        },
+        data: {
+          type: "array",
+          description: "Array de objetos con los datos. Cada objeto debe tener una clave para la etiqueta (xKey) y claves numericas para los valores (yKeys). Max 50 filas para claridad visual.",
+          items: { type: "object" },
+        },
+        xKey: {
+          type: "string",
+          description: "Nombre de la clave en cada objeto de datos que se usa como etiqueta del eje X / categoria (ej: 'nombre', 'periodo', 'region')",
+        },
+        yKeys: {
+          type: "array",
+          items: { type: "string" },
+          description: "Lista de claves numericas a graficar (ej: ['total_haberes', 'total_liquido']). Para pie chart, usar solo una.",
+        },
+        colors: {
+          type: "array",
+          items: { type: "string" },
+          description: "Colores hex opcionales para cada serie (ej: ['#3b82f6', '#ef4444']). Si se omite, se usan colores predefinidos.",
+        },
+        xLabel: {
+          type: "string",
+          description: "Etiqueta opcional para el eje X",
+        },
+        yLabel: {
+          type: "string",
+          description: "Etiqueta opcional para el eje Y",
+        },
+        formatY: {
+          type: "string",
+          enum: ["number", "currency_clp", "percent"],
+          description: "Formato para los valores del eje Y: number=numero simple, currency_clp=pesos chilenos, percent=porcentaje",
+        },
+      },
+      required: ["type", "title", "data", "xKey", "yKeys"],
     },
   },
 ];
@@ -288,32 +361,49 @@ export async function POST(req: NextRequest) {
         const toolResults: any[] = [];
 
         for (const toolUse of toolUses) {
-          if (toolUse.name !== "query_database") continue;
+          if (toolUse.name === "query_database") {
+            const { sql, description } = toolUse.input as { sql: string; description: string };
 
-          const { sql, description } = toolUse.input as { sql: string; description: string };
+            // Notify user we're running a query
+            controller.enqueue(encoder.encode(`\n\n_Consultando base de datos: ${description}..._\n\n`));
 
-          // Notify user we're running a query
-          controller.enqueue(encoder.encode(`\n\n_Consultando base de datos: ${description}..._\n\n`));
+            const result = await executeSql(sql);
 
-          const result = await executeSql(sql);
+            let resultText: string;
+            if (result.error) {
+              resultText = JSON.stringify({ error: result.error, sql });
+            } else {
+              resultText = JSON.stringify({
+                rowCount: result.rowCount,
+                truncated: result.truncated,
+                executionMs: result.executionMs,
+                data: result.data,
+              });
+            }
 
-          let resultText: string;
-          if (result.error) {
-            resultText = JSON.stringify({ error: result.error, sql });
-          } else {
-            resultText = JSON.stringify({
-              rowCount: result.rowCount,
-              truncated: result.truncated,
-              executionMs: result.executionMs,
-              data: result.data,
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: toolUse.id,
+              content: resultText,
+            });
+
+          } else if (toolUse.name === "render_chart") {
+            // Emit chart spec as a special marker in the stream — frontend parses and renders it
+            const chartSpec = toolUse.input as {
+              type: string; title: string; data: unknown[]; xKey: string;
+              yKeys: string[]; colors?: string[]; xLabel?: string; yLabel?: string; formatY?: string;
+            };
+
+            // Emit chart marker — frontend splits on this and renders a Recharts component
+            const chartJson = JSON.stringify(chartSpec);
+            controller.enqueue(encoder.encode(`\n\n%%CHART%%${chartJson}%%ENDCHART%%\n\n`));
+
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: toolUse.id,
+              content: JSON.stringify({ rendered: true, rows: chartSpec.data?.length ?? 0 }),
             });
           }
-
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: toolUse.id,
-            content: resultText,
-          });
         }
 
         loopMessages.push({ role: "user", content: toolResults });

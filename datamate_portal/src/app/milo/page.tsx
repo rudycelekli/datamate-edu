@@ -3,10 +3,14 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Send, Loader2, Trash2, Sparkles, BookOpen,
-  ChevronDown, AlertCircle, FileText, X, Database,
+  ChevronDown, AlertCircle, FileText, X, Database, BarChart2,
 } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
 import { getEducationSummary } from "@/lib/education-store";
+import {
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from "recharts";
 
 // ── Types ──
 interface Message {
@@ -14,6 +18,115 @@ interface Message {
   content: string;
   docs?: string[];
   phase?: string;
+}
+
+interface ChartConfig {
+  type: "bar" | "line" | "pie";
+  title: string;
+  data: Record<string, unknown>[];
+  xKey: string;
+  yKeys: string[];
+  colors?: string[];
+  xLabel?: string;
+  yLabel?: string;
+  formatY?: "number" | "currency_clp" | "percent";
+}
+
+const CHART_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16"];
+
+function fmtChartVal(v: number, fmt?: string): string {
+  if (fmt === "currency_clp") return new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 }).format(v);
+  if (fmt === "percent") return `${v}%`;
+  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}B`;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+  return String(v);
+}
+
+function MiloChart({ config }: { config: ChartConfig }) {
+  const colors = config.colors?.length ? config.colors : CHART_COLORS;
+  const formatY = config.formatY;
+
+  const tooltipFormatter = (value: unknown) =>
+    typeof value === "number" ? [fmtChartVal(value, formatY), ""] : [String(value), ""];
+
+  if (config.type === "pie") {
+    const key = config.yKeys[0];
+    const pieData = config.data.map(d => ({ name: String(d[config.xKey] ?? ""), value: Number(d[key] ?? 0) }));
+    const total = pieData.reduce((s, d) => s + d.value, 0);
+    return (
+      <div className="my-3 bg-white border border-[var(--border)] rounded-xl p-4 shadow-sm">
+        <div className="flex items-center gap-2 mb-3">
+          <BarChart2 className="w-4 h-4 text-[var(--accent)]" />
+          <h4 className="text-sm font-semibold text-[var(--text-primary)]">{config.title}</h4>
+        </div>
+        <ResponsiveContainer width="100%" height={260}>
+          <PieChart>
+            <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(1)}%`} labelLine={false}>
+              {pieData.map((_, i) => <Cell key={i} fill={colors[i % colors.length]} />)}
+            </Pie>
+            <Tooltip formatter={(v: unknown) => [typeof v === "number" ? fmtChartVal(v, formatY) : String(v), ""]} />
+            <Legend />
+          </PieChart>
+        </ResponsiveContainer>
+        <p className="text-[10px] text-[var(--text-muted)] text-right mt-1">Total: {fmtChartVal(total, formatY)}</p>
+      </div>
+    );
+  }
+
+  if (config.type === "line") {
+    return (
+      <div className="my-3 bg-white border border-[var(--border)] rounded-xl p-4 shadow-sm">
+        <div className="flex items-center gap-2 mb-3">
+          <BarChart2 className="w-4 h-4 text-[var(--accent)]" />
+          <h4 className="text-sm font-semibold text-[var(--text-primary)]">{config.title}</h4>
+        </div>
+        <ResponsiveContainer width="100%" height={280}>
+          <LineChart data={config.data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis dataKey={config.xKey} tick={{ fontSize: 11 }} label={config.xLabel ? { value: config.xLabel, position: "insideBottom", offset: -5, fontSize: 11 } : undefined} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtChartVal(Number(v), formatY)} label={config.yLabel ? { value: config.yLabel, angle: -90, position: "insideLeft", fontSize: 11 } : undefined} width={70} />
+            <Tooltip formatter={tooltipFormatter} />
+            {config.yKeys.length > 1 && <Legend />}
+            {config.yKeys.map((k, i) => (
+              <Line key={k} type="monotone" dataKey={k} stroke={colors[i % colors.length]} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} name={k} />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  // bar (default)
+  return (
+    <div className="my-3 bg-white border border-[var(--border)] rounded-xl p-4 shadow-sm">
+      <div className="flex items-center gap-2 mb-3">
+        <BarChart2 className="w-4 h-4 text-[var(--accent)]" />
+        <h4 className="text-sm font-semibold text-[var(--text-primary)]">{config.title}</h4>
+      </div>
+      <ResponsiveContainer width="100%" height={Math.max(220, Math.min(400, config.data.length * 22 + 80))}>
+        <BarChart data={config.data} layout={config.data.length > 8 ? "vertical" : "horizontal"} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          {config.data.length > 8 ? (
+            <>
+              <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => fmtChartVal(Number(v), formatY)} width={70} />
+              <YAxis type="category" dataKey={config.xKey} tick={{ fontSize: 10 }} width={130} />
+            </>
+          ) : (
+            <>
+              <XAxis dataKey={config.xKey} tick={{ fontSize: 10 }} label={config.xLabel ? { value: config.xLabel, position: "insideBottom", offset: -5, fontSize: 11 } : undefined} />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={v => fmtChartVal(Number(v), formatY)} label={config.yLabel ? { value: config.yLabel, angle: -90, position: "insideLeft", fontSize: 11 } : undefined} width={70} />
+            </>
+          )}
+          <Tooltip formatter={tooltipFormatter} />
+          {config.yKeys.length > 1 && <Legend />}
+          {config.yKeys.map((k, i) => (
+            <Bar key={k} dataKey={k} fill={colors[i % colors.length]} name={k} radius={[3, 3, 0, 0]} />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
 }
 
 // ── Map citation source names to actual PDF filenames ──
@@ -84,15 +197,32 @@ function buildPdfUrl(file: string, citation: string): string {
 
 // ── Suggested starter questions ──
 const STARTERS = [
-  { label: "Gastos por region", q: "Cual es la distribucion de gastos educativos por region? Que regiones concentran mayor gasto?" },
+  { label: "Top haberes 2024", q: "Muéstrame un gráfico de los 15 sostenedores con mayor gasto en haberes totales en 2024." },
+  { label: "Planta vs contrata", q: "Genera un gráfico comparando el total de trabajadores planta fija versus contrata por sostenedor en 2024." },
+  { label: "Remuneraciones por mes", q: "Muéstrame la evolución mensual de remuneraciones del sostenedor 65152518 durante 2024 en un gráfico de línea." },
+  { label: "Distribución por dependencia", q: "Grafica la distribución del gasto en haberes por tipo de dependencia educativa (PS, M, SLEP) en 2024." },
   { label: "Indicadores SIE", q: "Explicame los 13 indicadores clave que evalua la Superintendencia de Educacion para fiscalizar sostenedores." },
+  { label: "Riesgo financiero", q: "Muéstrame un gráfico con los sostenedores en estado CRITICO según su risk_score. Analiza sus indicadores." },
   { label: "Anomalias de gasto", q: "Como puedo detectar anomalias en los gastos declarados por un sostenedor? Que patrones son sospechosos?" },
-  { label: "Tipos de dependencia", q: "Compara los tipos de dependencia educativa: Municipal, Corporacion Municipal, SLEP y Particular Subvencionado. Cuales tienen mayor riesgo financiero?" },
-  { label: "Remuneraciones", q: "Como analizar las remuneraciones de un sostenedor? Que proporcion del gasto total deberian representar?" },
-  { label: "Documentos de compra", q: "Que tipos de documentos de compra deben presentar los sostenedores? Como detectar irregularidades en boletas y facturas?" },
-  { label: "Riesgo financiero", q: "Como se evalua el riesgo financiero de un sostenedor? Que indicadores son mas criticos para la Superintendencia?" },
-  { label: "Subvenciones", q: "Explicame los distintos tipos de subvenciones educativas y como se fiscaliza su uso correcto." },
+  { label: "Subvenciones", q: "Grafica el total de ingresos por tipo de subvención educativa (SEP, PIE, GENERAL, etc.) para todos los sostenedores." },
 ];
+
+/** Split message content into alternating text and chart blocks */
+function splitContentBlocks(content: string): Array<{ type: "text"; text: string } | { type: "chart"; config: ChartConfig }> {
+  const parts = content.split(/(%%CHART%%[\s\S]*?%%ENDCHART%%)/);
+  return parts.map(part => {
+    if (part.startsWith("%%CHART%%") && part.endsWith("%%ENDCHART%%")) {
+      const jsonStr = part.slice("%%CHART%%".length, -"%%ENDCHART%%".length).trim();
+      try {
+        const config = JSON.parse(jsonStr) as ChartConfig;
+        return { type: "chart" as const, config };
+      } catch {
+        return { type: "text" as const, text: "" };
+      }
+    }
+    return { type: "text" as const, text: part };
+  }).filter(b => b.type === "chart" || (b.type === "text" && b.text.trim() !== ""));
+}
 
 // ── Markdown renderer with citation support ──
 function renderMarkdown(text: string, onCitationClick: (file: string, citation: string) => void) {
@@ -478,7 +608,13 @@ export default function MiloPage() {
                       {msg.role === "user" ? (
                         <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                       ) : msg.content ? (
-                        <div className="prose-sm">{renderMarkdown(msg.content, openPdfPanel)}</div>
+                        <div className="prose-sm">
+                          {splitContentBlocks(msg.content).map((block, bi) =>
+                            block.type === "chart"
+                              ? <MiloChart key={bi} config={block.config} />
+                              : <div key={bi}>{renderMarkdown(block.text, openPdfPanel)}</div>
+                          )}
+                        </div>
                       ) : (
                         <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] py-1">
                           <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--accent)]" />
@@ -516,7 +652,7 @@ export default function MiloPage() {
         <div className="sticky bottom-0 bg-gradient-to-t from-[var(--bg-primary)] via-[var(--bg-primary)] to-transparent pt-4 pb-4 px-4 sm:px-6">
           {hasMessages && !loading && (
             <div className="flex gap-1.5 mb-2 overflow-x-auto pb-1 scrollbar-hide">
-              {["Comparar por dependencia", "Alertas de riesgo?", "Desglose por cuenta", "Tendencia historica", "Que documentos faltan?"].map((q, i) => (
+              {["Grafica esto", "Comparar por dependencia", "Tendencia mensual", "Alertas de riesgo?", "Desglose remuneraciones", "Top sostenedores"].map((q, i) => (
                 <button
                   key={i}
                   onClick={() => sendMessage(q)}
