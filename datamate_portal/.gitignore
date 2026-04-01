@@ -13,3 +13,4 @@ data/
 
 # Milo AI PDF chunks (generated at runtime)
 docs/MIlo AI/.chunks/
+.vercel
