@@ -1064,7 +1064,7 @@ export default function IntelligencePage() {
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis type="number" domain={[0, 100]} tickFormatter={v => `${v}%`} tick={{ fontSize: 10 }} />
                         <YAxis type="category" dataKey="name" width={60} tick={{ fontSize: 10 }} />
-                        <Tooltip formatter={(v: number) => [`${v}%`, "Ratio remuneracional"]} />
+                        <Tooltip formatter={(v) => [`${v}%`, "Ratio remuneracional"]} />
                         <ReferenceLine x={85} stroke="#ef4444" strokeDasharray="4 4" label={{ value: "85%", position: "insideTopRight", fontSize: 9, fill: "#ef4444" }} />
                         <ReferenceLine x={65} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: "65%", position: "insideTopLeft", fontSize: 9, fill: "#f59e0b" }} />
                         <Bar dataKey="avgRatio" name="Ratio Promedio" radius={[0, 3, 3, 0]}>
